@@ -7,17 +7,17 @@ DISCLAIMER: Most of the code written in this repo is modified from answers by Ge
 ```mermaid
 graph TD
     subgraph "Part 1: Sony RAW to F-Log2 Conversion"
-    A["Sony RAW File (.ARW)"] --> B("Demosaic & Linearize\nrawpy / LibRaw");
-    B -->|"Linear CIE XYZ"| C("Color Space Transform\nMatrix Multiplication");
-    C -->|"Linear Rec.2020"| D("Apply F-Log2 Curve\nLogarithmic Transfer Function");
-    D -->|"F-Log2 Rec.2020"| E["Intermediate F-Log2 Image\n(.TIFF)"];
+    A["Sony RAW File (.ARW)"] --> B("Demosaic & Linearize<br>rawpy / LibRaw");
+    B -->|"Linear CIE XYZ"| C("Color Space Transform<br>Matrix Multiplication");
+    C -->|"Linear Rec.2020"| D("Apply F-Log2 Curve<br>Logarithmic Transfer Function");
+    D -->|"F-Log2 Rec.2020"| E["Intermediate F-Log2 Image<br>(.TIFF)"];
     end
 
     subgraph "Part 2: Applying LUTs"
     E --> F("Load F-Log2 Image");
     G["LUT File (.cube)"] --> F;
-    F --> H("Apply 3D LUT\nTrilinear Interpolation");
-    H -->|"Output Color Space\n(e.g., Rec.709)" | I["Final Graded Image\n(.TIFF/.JPG)"];
+    F --> H("Apply 3D LUT<br>Trilinear Interpolation");
+    H -->|"Output Color Space<br>(e.g., Rec.709)" | I["Final Graded Image<br>(.TIFF/.JPG)"];
     end
 ```
 

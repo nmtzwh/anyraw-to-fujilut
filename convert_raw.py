@@ -209,7 +209,7 @@ def apply_lut_to_image(img, lut_obj, output_path, bit_depth_in=16):
     img_out = (img_graded * 255).astype(np.uint8) # use 8bit for smaller files
 
     # 5. Save
-    iio.imwrite(output_path, img_out)
+    iio.imwrite(output_path, img_out, quality=90)
     print(f"Graded image saved to: {output_path}")
 
 def process_batch(image_path, lut_folder_path):
