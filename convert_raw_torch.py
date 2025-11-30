@@ -111,8 +111,9 @@ class LUT3DApplier(torch.nn.Module):
         # LUT needs to be reshaped for grid_sample: (Batch, Channels, Depth, Height, Width)
         # Standard numpy LUT is usually (Size, Size, Size, 3)
         
-        # Transpose from (D, H, W, C) -> (C, D, H, W)
-        lut_tensor = torch.from_numpy(lut_numpy).permute(3, 0, 1, 2).unsqueeze(0).float()
+        # Transpose from (B, G, R, C) -> (C, R, G, B)
+        # TODO: check fujifilm's 3d-lut specification
+        lut_tensor = torch.from_numpy(lut_numpy).permute(3, 2, 1, 0).unsqueeze(0).float()
         self.register_buffer('lut', lut_tensor)
 
     def forward(self, img_tensor):
