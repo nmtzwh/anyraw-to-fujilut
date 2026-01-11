@@ -36,11 +36,34 @@ Future development will utilize `pytorch` or `jax` and their ability to auto-com
 
 ## 3. Quick start
 
+### Using the Command Line
+
 1. download LUTs from [Fujifilm's website](https://www.fujifilm-x.com/global/support/download/lut/)
-2. extract and select your favourate LUTs that are applicable to F-Log2 format (both 33-point/65-point should be fine)
+2. extract and select your favourite LUTs that are applicable to F-Log2 format (both 33-point/65-point should be fine)
 3. run the script with your RAW still image file and the path to all the LUTs
 4. converted images will be saved as `jpeg` files in the current path with appended names
 
 ```bash
 python ./convert_raw.py --image IMAGE --lut LUT
 ```
+
+### Using the Desktop GUI
+
+1. Ensure all dependencies are installed, including PyQt5 and PyTorch
+2. Run the GUI application:
+
+```bash
+python ./raw_converter_gui.py
+```
+
+3. Use the GUI to:
+   - Open a RAW photo file
+   - Select a folder containing LUTs
+   - Click "Convert" to apply all LUTs
+   - Preview the converted images
+   - Select images to export
+   - Click "Export Selected" to save your chosen images
+
+## 4. GPU Acceleration
+
+The `convert_raw_torch.py` script and GUI application utilize PyTorch for GPU acceleration, which significantly speeds up the conversion process. Ensure you have a compatible GPU and the correct CUDA drivers installed for optimal performance.
