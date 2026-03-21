@@ -1,0 +1,195 @@
+name: Build & Package FujiLUT
+
+on:
+  push:
+    branches:
+      - feat/electron-wave2a
+  pull_request:
+    branches:
+      - feat/electron-wave2a
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Type-check + unit tests (runs on every push) ────────────────────────────────
+  lint-and-test:
+    name: Type-check & backend tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: pip install -r backend/requirements.txt
+
+      - name: Type-check (main)
+        working-directory: electron-wave2a
+        run: npm run typecheck
+
+      - name: Backend unit tests
+        run: pytest backend/tests/ -v --tb=short
+
+  # ── macOS build ───────────────────────────────────────────────────────────────
+  build-macos:
+    name: macOS DMG (${{ matrix.arch }})
+    needs: lint-and-test
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Copy backend (main worktree → electron-wave2a)
+        run: bash electron-wave2a/scripts/prepare-backend.sh
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: electron-wave2a/package-lock.json
+
+      - name: Install npm dependencies
+        working-directory: electron-wave2a
+        run: npm ci
+
+      - name: Build TypeScript
+        working-directory: electron-wave2a
+        run: npm run build
+
+      - name: Build DMG
+        working-directory: electron-wave2a
+        run: npm run dist -- --${{ matrix.arch == 'arm64' && 'arm64' || 'x64' }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fujilut-macos-${{ matrix.arch }}
+          path: electron-wave2a/dist/*.dmg
+          retention-days: 14
+
+  # ── Windows build ──────────────────────────────────────────────────────────────
+  build-windows:
+    name: Windows NSIS
+    needs: lint-and-test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Copy backend
+        run: bash electron-wave2a/scripts/prepare-backend.sh
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: electron-wave2a/package-lock.json
+
+      - name: Install npm dependencies
+        working-directory: electron-wave2a
+        run: npm ci
+
+      - name: Build TypeScript
+        working-directory: electron-wave2a
+        run: npm run build
+
+      - name: Build NSIS installer
+        working-directory: electron-wave2a
+        run: npm run dist
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fujilut-windows
+          path: electron-wave2a/dist/*.exe
+          retention-days: 14
+
+  # ── Linux build ──────────────────────────────────────────────────────────────
+  build-linux:
+    name: Linux AppImage
+    needs: lint-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Copy backend
+        run: bash electron-wave2a/scripts/prepare-backend.sh
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: electron-wave2a/package-lock.json
+
+      - name: Install npm dependencies
+        working-directory: electron-wave2a
+        run: npm ci
+
+      - name: Build TypeScript
+        working-directory: electron-wave2a
+        run: npm run build
+
+      - name: Build AppImage
+        working-directory: electron-wave2a
+        run: npm run dist
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fujilut-linux
+          path: electron-wave2a/dist/*.AppImage
+          retention-days: 14
+
+  # ── Playwright E2E tests ─────────────────────────────────────────────────────
+  e2e-tests:
+    name: Playwright E2E (${{ matrix.os }})
+    needs: lint-and-test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Copy backend
+        run: bash electron-wave2a/scripts/prepare-backend.sh
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: electron-wave2a/package-lock.json
+
+      - name: Install npm dependencies
+        working-directory: electron-wave2a
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: electron-wave2a
+        run: npx playwright install --with-deps chromium
+
+      - name: Build TypeScript
+        working-directory: electron-wave2a
+        run: npm run build
+
+      - name: Run Playwright tests
+        working-directory: electron-wave2a
+        run: npx playwright test
+        env:
+          CI: "true"
+          PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: ${{ matrix.os == 'windows-latest' && 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe' || '' }}

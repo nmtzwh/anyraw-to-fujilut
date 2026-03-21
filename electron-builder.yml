@@ -1,0 +1,88 @@
+appId: com.fujilut.app
+productName: FujiLUT
+copyright: Copyright © 2025
+asar: true
+asarUnpack:
+  - resources/backend/**
+
+directories:
+  output: dist
+  buildResources: build-resources
+
+files:
+  - build/**/*
+  - public/**/*
+  - package.json
+
+extraResources:
+  - from: ../backend
+    to: backend
+    filter:
+      - "**/*"
+      - "!__pycache__/**"
+      - "!*.pyc"
+      - "!tests/**"
+      - "!*.pyc"
+      - "!conftest.py"
+      - "!__init__.py"
+    # ^ Note: ../backend is relative to the electron-wave2a worktree root.
+    # It resolves to the main worktree's backend/ directory, which is at the repo root.
+    # Ensure the main worktree's backend/ is present before running electron-builder.
+  - from: build-resources/python-venv
+    to: python-venv
+    filter:
+      - "**/*"
+
+# Python venv preparation (run before packaging)
+# npm run prepare:backend  (copies backend from main worktree)
+# npm run prepare:venv     (creates python venv with torch-free deps)
+# See scripts/prepare-backend.sh and scripts/prepare-venv.sh
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: build-resources/icon.ico
+  requestedExecutionLevel: asInvoker
+nsis:
+  oneFile: true
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  installerIcon: build-resources/icon.ico
+  uninstallerIcon: build-resources/icon.ico
+  artifactName: ${productName}-${version}-win-x64.${ext}
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+  icon: build-resources/icon.icns
+  category: public.app-category.photography
+  hardenedRuntime: true
+  gatekeeperAssess: false
+dmg:
+  artifactName: ${productName}-${version}-mac-${arch}.${ext}
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+  icon: build-resources/icons
+  category: Graphics
+  maintainer: FujiLUT
+  synopsis: RAW to Fujifilm LUT Converter
+  desktop:
+    StartupWMClass: FujiLUT
+appImage:
+  artifactName: ${productName}-${version}-linux-x64.${ext}

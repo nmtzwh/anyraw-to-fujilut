@@ -1,0 +1,35 @@
+{
+  "name": "anyraw-to-fujilut-electron-wave2a",
+  "version": "0.1.0",
+  "private": true,
+  "description": "FujiLUT Electron frontend (Wave 2A)",
+  "main": "build/electron/main.js",
+  "scripts": {
+    "typecheck:main": "tsc --noEmit -p tsconfig.main.json",
+    "typecheck:renderer": "tsc --noEmit -p tsconfig.renderer.json",
+    "typecheck": "npm run typecheck:main && npm run typecheck:renderer",
+    "build:main": "esbuild src/electron/main.ts src/electron/preload.ts src/electron/ipc.ts --bundle --platform=node --outdir=build/electron --external:electron --format=cjs",
+    "build:renderer": "esbuild src/app.ts src/color.ts src/lut.ts --bundle --outdir=build --format=iife --sourcemap",
+    "build": "npm run build:main && npm run build:renderer",
+    "clean": "rm -rf build",
+    "start": "npm run build && electron .",
+    "pack": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:ui": "playwright test --ui"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "parse-cube-lut": "^1.0.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0",
+    "@types/node": "^25.0.0",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0",
+    "@electron/rebuild": "^3.7.0",
+    "typescript": "^5.9.3",
+    "@playwright/test": "^1.40.0"
+  }
+}

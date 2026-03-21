@@ -1,0 +1,149 @@
+/**
+ * ipc.ts — HTTP proxy layer between the Electron main process and the Python FastAPI backend.
+ *
+ * Architecture: the renderer NEVER makes raw HTTP calls. Instead it calls into the
+ * preload bridge (contextBridge). The preload calls ipcRenderer.invoke(), which routes to
+ * main. Main makes the HTTP request to Python at http://127.0.0.1:19876 and returns
+ * the parsed response to the renderer.
+ *
+ * This keeps the renderer sandboxed (no direct network) and lets the main process
+ * own all external communication.
+ */
+
+import { ipcMain, shell, dialog, IpcMainInvokeEvent, OpenDialogOptions } from "electron";
+
+export const BACKEND_ORIGIN = "http://127.0.0.1:19876";
+export const HEALTH_PATH = "/health";
+export const CONVERT_PATH = "/convert";
+
+export interface HealthResponse {
+  status: string;
+  version: string;
+}
+
+export interface ConvertResult {
+  lut_name: string;
+  image_base64_jpeg: string;
+}
+
+export interface ConvertResponse {
+  results: ConvertResult[];
+}
+
+/** Fetch helpers — all network calls stay in the main process. */
+
+async function backendFetch(path: string, init?: RequestInit): Promise<Response> {
+  const url = `${BACKEND_ORIGIN}${path}`;
+  const resp = await fetch(url, init);
+  if (!resp.ok) {
+    throw new Error(`Backend request failed: ${resp.status} ${resp.statusText} — ${path}`);
+  }
+  return resp;
+}
+
+async function backendGet<T>(path: string): Promise<T> {
+  const resp = await backendFetch(path);
+  return resp.json() as Promise<T>;
+}
+
+async function backendPost<T>(path: string, body: unknown): Promise<T> {
+  const resp = await backendFetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return resp.json() as Promise<T>;
+}
+
+/** Wire up all IPC handlers. Call once from main.ts during app startup. */
+export function registerIpcHandlers(): void {
+  // ── Test-mode error injection (Playwright) ─────────────────────────────────
+  let simulateConvertError = false;
+  ipcMain.handle("backend:simulateError", (_ev: IpcMainInvokeEvent, enabled: boolean) => {
+    simulateConvertError = enabled;
+  });
+
+  // ── Health check ────────────────────────────────────────────────────────────
+  ipcMain.handle("backend:health", async (): Promise<HealthResponse> => {
+    try {
+      return await backendGet<HealthResponse>(HEALTH_PATH);
+    } catch (err) {
+      throw new Error(`Backend unreachable: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  });
+
+  // ── Convert a RAW image through N LUTs ──────────────────────────────────────
+  // Renderer sends ArrayBuffer chunks keyed by filename. Main assembles a
+  // multipart/form-data POST and forwards to the Python backend.
+  ipcMain.handle(
+    "backend:convert",
+    async (
+      _ev: IpcMainInvokeEvent,
+      payload: { imageBuffer: ArrayBuffer; imageName: string; lutBuffers: ArrayBuffer[]; lutNames: string[] }
+    ): Promise<ConvertResponse> => {
+      if (simulateConvertError) {
+        throw new Error("Simulated backend error — inject backend:simulateError(false) to disable");
+      }
+      const { imageBuffer, imageName, lutBuffers, lutNames } = payload;
+
+      const form = new FormData();
+      const imageBlob = new Blob([imageBuffer], { type: "application/octet-stream" });
+      form.append("image", imageBlob, imageName);
+
+      for (let i = 0; i < lutBuffers.length; i++) {
+        const lutBlob = new Blob([lutBuffers[i]], { type: "text/plain" });
+        form.append("luts", lutBlob, lutNames[i] ?? `lut_${i}.cube`);
+      }
+
+      const resp = await fetch(`${BACKEND_ORIGIN}${CONVERT_PATH}`, { method: "POST", body: form });
+      if (!resp.ok) {
+        throw new Error(`Convert failed: ${resp.status} ${resp.statusText}`);
+      }
+      return resp.json() as Promise<ConvertResponse>;
+    }
+  );
+
+  // ── File dialogs (proxied so renderer can't bypass sandbox) ───────────────────
+  ipcMain.handle("dialog:openFile", async (_ev: IpcMainInvokeEvent, filters?: OpenDialogOptions["filters"]): Promise<string | null> => {
+    const result = await dialog.showOpenDialog({
+      properties: ["openFile"],
+      filters: filters ?? [
+        { name: "RAW Images", extensions: ["arw", "dng", "nef", "cr2", "cr3", "raf", "orf", "rw2"] },
+        { name: "All Files", extensions: ["*"] },
+      ],
+    });
+    return result.canceled ? null : result.filePaths[0] ?? null;
+  });
+
+  ipcMain.handle(
+    "dialog:saveFile",
+    async (_ev: IpcMainInvokeEvent, defaultPath?: string): Promise<string | null> => {
+      const result = await dialog.showSaveDialog({
+        defaultPath,
+        filters: [
+          { name: "JPEG Image", extensions: ["jpg", "jpeg"] },
+          { name: "TIFF Image", extensions: ["tif", "tiff"] },
+        ],
+      });
+      return result.canceled ? null : result.filePath ?? null;
+    }
+  );
+
+  // ── Read file as ArrayBuffer (renderer can't access fs directly) ───────────
+  ipcMain.handle("fs:readFile", async (_ev: IpcMainInvokeEvent, filePath: string): Promise<ArrayBuffer> => {
+    const fs = await import("fs/promises");
+    const buf = await fs.readFile(filePath);
+    return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
+  });
+
+  // ── Write bytes to a path (for exporting results) ───────────────────────────
+  ipcMain.handle("fs:writeFile", async (_ev: IpcMainInvokeEvent, path: string, buffer: ArrayBuffer): Promise<void> => {
+    const fs = await import("fs/promises");
+    await fs.writeFile(path, Buffer.from(buffer));
+  });
+
+  // ── Open external URL in system browser ──────────────────────────────────────
+  ipcMain.handle("shell:openExternal", async (_ev: IpcMainInvokeEvent, url: string): Promise<void> => {
+    await shell.openExternal(url);
+  });
+}
