@@ -23,6 +23,7 @@ let rawFileName: string | null = null;
 let lutFilePaths: string[] = [];
 let lutNames: string[] = [];
 let results: ConversionResult[] = [];
+let currentEvOffset = 0;
 
 function showErrorModal(msg: string): void {
   const modal = qe<HTMLDivElement>("error-modal");
@@ -64,11 +65,12 @@ function checkConvertReady(): void {
 }
 
 async function openRawFile(): Promise<void> {
-  const filePath = await api.dialog.openFile([
-    { name: "RAW Images", extensions: ["arw", "dng", "nef", "cr2", "cr3", "raf", "orf", "rw2"] },
-    { name: "All Files", extensions: ["*"] },
-  ]);
-  if (!filePath) return;
+  const selected = await api.dialog.openFile(
+    [{ name: "RAW Images", extensions: ["arw", "dng", "nef", "cr2", "cr3", "raf", "orf", "rw2"] }, { name: "All Files", extensions: ["*"] }],
+    false,
+  );
+  if (!selected) return;
+  const filePath = Array.isArray(selected) ? selected[0] : selected;
   rawFilePath = filePath;
   rawFileName = filePath.split(/[\\/]/).pop() ?? filePath;
   setStatus(`Selected: ${rawFileName}`);
@@ -76,26 +78,22 @@ async function openRawFile(): Promise<void> {
 }
 
 async function selectLutFiles(): Promise<void> {
-  const MAX_LUTS = 20;
-  const selected: string[] = [];
-  for (let i = 0; i < MAX_LUTS; i++) {
-    const path = await api.dialog.openFile([
-      { name: "Cube LUT", extensions: ["cube"] },
-      { name: "All Files", extensions: ["*"] },
-    ]);
-    if (!path) break;
-    selected.push(path);
-    setStatus(`Selected ${selected.length} LUT file(s)\u2026`);
-  }
-  if (selected.length === 0) return;
-  lutFilePaths = selected;
-  lutNames = selected.map((p, idx) => p.split(/[\\/]/).pop()?.replace(".cube", "") ?? `lut_${idx}`);
+  const selected = await api.dialog.openFile(
+    [{ name: "Cube LUT", extensions: ["cube"] }, { name: "All Files", extensions: ["*"] }],
+    true,
+  );
+  if (!selected || (Array.isArray(selected) && selected.length === 0)) return;
+
+  const paths = Array.isArray(selected) ? selected : [selected];
+  lutFilePaths = paths;
+  lutNames = paths.map((p, idx) => p.split(/[\\/]/).pop()?.replace(/\.cube$/i, "") ?? `lut_${idx}`);
   setStatus(`${lutNames.length} LUT(s) selected`);
   checkConvertReady();
 }
 
-async function startConversion(): Promise<void> {
+async function startConversion(evOffset?: number): Promise<void> {
   if (!rawFilePath || lutFilePaths.length === 0) return;
+  if (evOffset !== undefined) currentEvOffset = evOffset;
   enableControls(false);
   setProgress(5);
   setStatus("Reading RAW file\u2026");
@@ -139,11 +137,20 @@ async function startConversion(): Promise<void> {
   }
 
   setProgress(90);
-  results = response.results.map((r) => ({
-    lutName: r.lut_name,
-    dataUrl: `data:image/jpeg;base64,${r.image_base64_jpeg}`,
-    selected: false,
-  }));
+  try {
+    if (!response || !Array.isArray(response.results)) {
+      throw new Error("Invalid response from backend: expected results array");
+    }
+    results = response.results.map((r) => ({
+      lutName: r.lut_name,
+      dataUrl: `data:image/jpeg;base64,${r.image_base64_jpeg}`,
+      selected: false,
+    }));
+  } catch (err) {
+    showErrorModal(`Failed to parse backend response: ${(err as Error).message}`);
+    enableControls(true);
+    return;
+  }
 
   displayResults();
   setProgress(100);
@@ -225,6 +232,12 @@ function updateExposureLabel(): void {
   }
 }
 
+function applyExposure(): void {
+  const slider = qe<HTMLInputElement>("exposure-slider");
+  const evOffset = slider ? parseInt(slider.value) / 10 : 0;
+  startConversion(evOffset);
+}
+
 function init(): void {
   const dot = qe<HTMLDivElement>("backend-dot");
   const lbl = qe<HTMLSpanElement>("backend-label");
@@ -253,9 +266,9 @@ function init(): void {
 
   qe<HTMLButtonElement>("btn-open-raw")?.addEventListener("click", openRawFile);
   qe<HTMLButtonElement>("btn-select-luts")?.addEventListener("click", selectLutFiles);
-  qe<HTMLButtonElement>("btn-convert")?.addEventListener("click", startConversion);
+  qe<HTMLButtonElement>("btn-convert")?.addEventListener("click", () => startConversion());
   qe<HTMLButtonElement>("btn-export")?.addEventListener("click", exportSelected);
-  qe<HTMLButtonElement>("btn-apply-exposure")?.addEventListener("click", startConversion);
+  qe<HTMLButtonElement>("btn-apply-exposure")?.addEventListener("click", applyExposure);
 
   qe<HTMLButtonElement>("btn-retry-conversion")?.addEventListener("click", () => {
     hideErrorModal();

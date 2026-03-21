@@ -36,7 +36,7 @@ export interface ElectronAPI {
     simulateError: (enabled: boolean) => Promise<void>;
   };
   dialog: {
-    openFile: (filters?: FileFilter[]) => Promise<string | null>;
+    openFile: (filters?: FileFilter[], allowMultiple?: boolean) => Promise<string | string[] | null>;
     saveFile: (defaultPath?: string) => Promise<string | null>;
   };
   fs: {

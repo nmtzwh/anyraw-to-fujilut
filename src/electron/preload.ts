@@ -42,7 +42,7 @@ export interface ElectronAPI {
     simulateError: (enabled: boolean) => Promise<void>;
   };
   dialog: {
-    openFile: (filters?: FileFilter[]) => Promise<string | null>;
+    openFile: (filters?: FileFilter[], allowMultiple?: boolean) => Promise<string | string[] | null>;
     saveFile: (defaultPath?: string) => Promise<string | null>;
   };
   fs: {
@@ -61,7 +61,7 @@ const api: ElectronAPI = {
     simulateError: (enabled: boolean) => ipcRenderer.invoke("backend:simulateError", enabled),
   },
   dialog: {
-    openFile: (filters?: FileFilter[]) => ipcRenderer.invoke("dialog:openFile", filters),
+    openFile: (filters?: FileFilter[], allowMultiple?: boolean) => ipcRenderer.invoke("dialog:openFile", filters, allowMultiple),
     saveFile: (defaultPath?: string) => ipcRenderer.invoke("dialog:saveFile", defaultPath),
   },
   fs: {

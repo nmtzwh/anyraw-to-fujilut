@@ -16,6 +16,10 @@ export const BACKEND_ORIGIN = "http://127.0.0.1:19876";
 export const HEALTH_PATH = "/health";
 export const CONVERT_PATH = "/convert";
 
+/** Approved file paths — only files selected via dialogs can be read/written. */
+const approvedReadPaths = new Set<string>();
+const approvedWritePaths = new Set<string>();
+
 export interface HealthResponse {
   status: string;
   version: string;
@@ -104,15 +108,19 @@ export function registerIpcHandlers(): void {
   );
 
   // ── File dialogs (proxied so renderer can't bypass sandbox) ───────────────────
-  ipcMain.handle("dialog:openFile", async (_ev: IpcMainInvokeEvent, filters?: OpenDialogOptions["filters"]): Promise<string | null> => {
+  ipcMain.handle("dialog:openFile", async (_ev: IpcMainInvokeEvent, filters?: OpenDialogOptions["filters"], allowMultiple?: boolean): Promise<string | string[] | null> => {
+    const props: OpenDialogOptions["properties"] = ["openFile"];
+    if (allowMultiple) props.push("multiSelections");
     const result = await dialog.showOpenDialog({
-      properties: ["openFile"],
+      properties: props,
       filters: filters ?? [
         { name: "RAW Images", extensions: ["arw", "dng", "nef", "cr2", "cr3", "raf", "orf", "rw2"] },
         { name: "All Files", extensions: ["*"] },
       ],
     });
-    return result.canceled ? null : result.filePaths[0] ?? null;
+    if (result.canceled || result.filePaths.length === 0) return null;
+    for (const p of result.filePaths) approvedReadPaths.add(p);
+    return allowMultiple ? result.filePaths : result.filePaths[0];
   });
 
   ipcMain.handle(
@@ -125,12 +133,17 @@ export function registerIpcHandlers(): void {
           { name: "TIFF Image", extensions: ["tif", "tiff"] },
         ],
       });
-      return result.canceled ? null : result.filePath ?? null;
+      if (result.canceled || !result.filePath) return null;
+      approvedWritePaths.add(result.filePath);
+      return result.filePath;
     }
   );
 
   // ── Read file as ArrayBuffer (renderer can't access fs directly) ───────────
   ipcMain.handle("fs:readFile", async (_ev: IpcMainInvokeEvent, filePath: string): Promise<ArrayBuffer> => {
+    if (!approvedReadPaths.has(filePath)) {
+      throw new Error("Forbidden: file path not approved by user dialog");
+    }
     const fs = await import("fs/promises");
     const buf = await fs.readFile(filePath);
     return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
@@ -138,12 +151,19 @@ export function registerIpcHandlers(): void {
 
   // ── Write bytes to a path (for exporting results) ───────────────────────────
   ipcMain.handle("fs:writeFile", async (_ev: IpcMainInvokeEvent, path: string, buffer: ArrayBuffer): Promise<void> => {
+    if (!approvedWritePaths.has(path)) {
+      throw new Error("Forbidden: file path not approved by save dialog");
+    }
     const fs = await import("fs/promises");
     await fs.writeFile(path, Buffer.from(buffer));
   });
 
   // ── Open external URL in system browser ──────────────────────────────────────
   ipcMain.handle("shell:openExternal", async (_ev: IpcMainInvokeEvent, url: string): Promise<void> => {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      throw new Error(`Forbidden URL scheme: ${parsed.protocol}`);
+    }
     await shell.openExternal(url);
   });
 }
