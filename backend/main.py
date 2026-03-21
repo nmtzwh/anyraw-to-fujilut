@@ -36,7 +36,9 @@ origins = ["http://localhost", "http://127.0.0.1"]
 
 def _process_image(image_path: str, lut_table: np.ndarray) -> bytes:
     xyz = load_image_to_xyz(image_path)
-    rec2020 = pipe.xyz_to_rec2020(xyz)
+    gain = pipe.get_exposure_gain(xyz)
+    xyz_exposed = xyz * gain
+    rec2020 = pipe.xyz_to_rec2020(xyz_exposed)
     flog2 = pipe.apply_flog2_curve(rec2020)
     graded = pipe.apply_lut(flog2, lut_table)
     out_u8 = (np.clip(graded, 0.0, 1.0) * 255.0).astype(np.uint8)

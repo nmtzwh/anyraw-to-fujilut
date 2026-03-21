@@ -11,6 +11,39 @@ SUPPORTED_TIFF = {".TIFF", ".TIF"}
 SUPPORTED_IMG = {".JPG", ".JPEG", ".PNG"}
 
 
+def crop_raw_with_flips(xyz_img: np.ndarray, imagesize) -> np.ndarray:
+    """Crop the image to the effective area, accounting for sensor flip orientation."""
+    flip = imagesize.flip
+
+    match flip:
+        case 0:
+            left = imagesize.crop_left_margin
+            top = imagesize.crop_top_margin
+            right = left + imagesize.crop_width
+            bottom = top + imagesize.crop_height
+            return xyz_img[top:bottom, left:right]
+        case 3:
+            left = imagesize.raw_width - imagesize.crop_left_margin - imagesize.crop_width
+            top = imagesize.raw_height - imagesize.crop_top_margin - imagesize.crop_height
+            right = left + imagesize.crop_width
+            bottom = top + imagesize.crop_height
+            return xyz_img[top:bottom, left:right]
+        case 5:
+            left = imagesize.crop_top_margin
+            top = imagesize.raw_width - imagesize.crop_left_margin - imagesize.crop_width
+            right = left + imagesize.crop_height
+            bottom = top + imagesize.crop_width
+            return xyz_img[top:bottom, left:right]
+        case 6:
+            left = imagesize.raw_height - imagesize.crop_top_margin - imagesize.crop_height
+            top = imagesize.crop_left_margin
+            right = left + imagesize.crop_height
+            bottom = top + imagesize.crop_width
+            return xyz_img[top:bottom, left:right]
+        case _:
+            raise ValueError(f"Unknown flip: {flip}")
+
+
 def load_image_to_xyz(path: str) -> np.ndarray:
     ext = os.path.splitext(path)[1].upper()
     if ext in SUPPORTED_RAW:
@@ -28,21 +61,20 @@ def _load_raw_to_xyz(path: str) -> np.ndarray:
 
     with rawpy.imread(path) as raw:
         params = rawpy.Params(
-            use_camera_wb=False,
-            use_auto_wb=False,
+            use_camera_wb=True,
             no_auto_bright=True,
+            bright=1.0,
+            user_sat=None,
             output_color=rawpy.ColorSpace.XYZ,
             output_bps=16,
             gamma=[1, 1],
-            user_black=None,
-            user_sat=None,
             dcb_iterations=0,
             dcb_enhance=False,
             median_filter_passes=0,
         )
         rgb = raw.postprocess(params)
         rgb_f = rgb.astype(np.float32) / 65535.0
-        rgb_f = np.clip(rgb_f, 0.0, 1.0)
+        rgb_f = crop_raw_with_flips(rgb_f, raw.sizes)
 
     M_rgb_to_xyz = np.array(
         [

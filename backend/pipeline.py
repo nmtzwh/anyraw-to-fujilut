@@ -43,23 +43,31 @@ def load_raw(path: str) -> np.ndarray:
 
 
 def apply_flog2_curve(xyz: np.ndarray) -> np.ndarray:
-    """Apply a deterministic F-Log2-like curve to an XYZ array.
+    """Apply the Fujifilm F-Log2 OETF (Opto-Electronic Transfer Function).
 
-    The curve is defined to be monotonic and normalized to [0, 1]. It is a
-    simple, well-behaved mapping suitable for unit tests and CPU execution
-    without external libraries.
-
-    Formula:
-        v = clip(xyz, 0, 1)
-        flog2 = (1 - exp(-2*v)) / (1 - exp(-2))
-    where the operation is applied elementwise per channel.
+    Based on F-Log2 Data Sheet Ver.1.1.
+    Uses a piecewise function: logarithmic shoulder for values above cut1,
+    linear toe for values below.
     """
+    a = 5.555556
+    b = 0.064829
+    c = 0.245281
+    d = 0.384316
+    e = 8.799461
+    f = 0.092864
+    cut1 = 0.000889
 
     v = np.asarray(xyz, dtype=np.float32)
     v = np.clip(v, 0.0, 1.0)
-    denom = 1.0 - np.exp(-2.0)
-    flog2 = (1.0 - np.exp(-2.0 * v)) / denom
-    return flog2.astype(np.float32)
+    out = np.zeros_like(v)
+
+    mask_log = v >= cut1
+    mask_linear = v < cut1
+
+    out[mask_log] = c * np.log10(a * v[mask_log] + b) + d
+    out[mask_linear] = e * v[mask_linear] + f
+
+    return np.clip(out, 0.0, 1.0).astype(np.float32)
 
 
 def xyz_to_rec2020(xyz: np.ndarray) -> np.ndarray:
@@ -84,6 +92,21 @@ def xyz_to_rec2020(xyz: np.ndarray) -> np.ndarray:
     transformed = flat @ M.T  # shape (N, 3)
     out = transformed.reshape(a.shape)
     return np.clip(out, 0.0, 1.0).astype(np.float32)
+
+
+def get_exposure_gain(xyz_image: np.ndarray, target_grey: float = 0.18, ev_offset: float = 0.0) -> float:
+    """Calculate gain to normalize image exposure based on geometric mean of Y channel.
+
+    Extracts the Y (luminance) channel from XYZ data, computes the geometric mean,
+    and returns a gain factor to normalize exposure to a target grey level.
+    """
+    Y_channel = xyz_image[::10, ::10, 1]
+    epsilon = 1e-6
+    log_Y = np.log(np.maximum(Y_channel, epsilon))
+    geom_mean = np.exp(np.mean(log_Y))
+    safe_mean = max(geom_mean, epsilon)
+    gain = target_grey / safe_mean
+    return gain * (2.0 ** ev_offset)
 
 
 def apply_lut(flog2: np.ndarray, lut_table: np.ndarray) -> np.ndarray:
@@ -159,5 +182,6 @@ __all__ = [
     "apply_flog2_curve",
     "xyz_to_rec2020",
     "apply_lut",
+    "get_exposure_gain",
     "prewarm",
 ]
