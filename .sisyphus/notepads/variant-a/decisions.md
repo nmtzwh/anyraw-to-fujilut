@@ -1,0 +1,12 @@
+# Decisions
+- Adopt a minimal, pure-Python pipeline with NumPy only for unit-testability.
+- Use a fixed 3x3 XYZ->Rec2020 matrix for deterministic results.
+- Implement 3D LUT with explicit tri-linear interpolation over a (N,N,N,3) table.
+- FastAPI on fixed port 19876; CORS restricted to localhost origins.
+- POST /convert accepts multipart/form-data (image + N LUTs), returns base64 JPEG per LUT.
+- GET /health returns {status: "ok", version: string}.
+- Python 3.11.x pinned for the torch-free backend (see backend/requirements.txt).
+- colour-science>=0.19, rawpy>=0.19, imageio>=2.25, tifffile>=2023.1.23 pinned with minima.
+- scipy>=1.10 included as a colour-science transitive dependency needed for CPU LUT workflow.
+- Wave 2A.1 — Electron scaffold: contextIsolation+nodeIntegration:false+sandbox:true for renderer security. Backend subprocess on port 19876. IPC via preload contextBridge (window.electronAPI). Renderer never makes raw HTTP calls; main process owns all network. Backend health polled on startup before showing window.
+- Wave 2A.4 — libraw-wasm and raw-decoder.ts are absent from electron-wave2a worktree. RAW decoding happens in Python backend via rawpy. src/color.ts and src/lut.ts are stubs pointing to full implementations in gui-dev worktree. No libraw-wasm in package.json devDeps for this worktree.

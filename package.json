@@ -1,8 +1,18 @@
 {
-  "name": "anyraw-to-fujilut-electron-wave2a",
+  "name": "anyraw-to-fujilut",
   "version": "0.1.0",
   "private": true,
-  "description": "FujiLUT Electron frontend (Wave 2A)",
+  "description": "Convert Sony RAW files to Fujifilm F-Log2 images with 3D LUTs applied",
+  "license": "MIT",
+  "author": "",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nmtzwh/anyraw-to-fujilut.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nmtzwh/anyraw-to-fujilut/issues"
+  },
+  "homepage": "https://github.com/nmtzwh/anyraw-to-fujilut#readme",
   "main": "build/electron/main.js",
   "scripts": {
     "typecheck:main": "tsc --noEmit -p tsconfig.main.json",

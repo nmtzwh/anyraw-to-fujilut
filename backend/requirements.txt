@@ -1,0 +1,21 @@
+# backend/requirements.txt — Torch-free CPU pipeline
+# Python 3.11.x required
+# Install: pip install -r backend/requirements.txt
+
+# Core image/numeric stack
+numpy>=1.26,<2
+scipy>=1.10
+rawpy>=0.19
+colour-science>=0.3
+imageio>=2.25
+tifffile>=2023.1.23
+
+# FastAPI service
+fastapi>=0.100
+uvicorn[standard]>=0.23
+python-multipart>=0.0.6
+pydantic>=2.0
+
+# Testing
+pytest>=7.0
+httpx>=0.24

@@ -1,0 +1,2 @@
+- No tests runnable in current environment due to missing pytest binary.
+- If future failures occur, add CI step to install dependencies and run tests.

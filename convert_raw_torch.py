@@ -177,7 +177,7 @@ def crop_raw_with_flips(xyz_img, imagesize):
         case _:  # Default case (wildcard)
             raise ValueError(f"Unknown flip: {flip}")
         
-def process_pipeline(image_path, lut_folder_path, output_path):
+def process_pipeline(image_path, lut_files, output_path, exposure):
     # --- Step A: CPU Bound (LibRaw) ---
     # There is no escaping CPU here easily without custom C++ CUDA decoders
     # Load the image once implies we will process it multiple times
@@ -191,57 +191,53 @@ def process_pipeline(image_path, lut_folder_path, output_path):
             no_auto_bright=True,
             bright=1.0,
             output_color=rawpy.ColorSpace.XYZ,
-            gamma=(1, 1), 
+            gamma=(1, 1),
             output_bps=16
         )
-        xyz_cropped = crop_raw_with_flips(xyz_image, raw.sizes)       
+        xyz_cropped = crop_raw_with_flips(xyz_image, raw.sizes)
         print(f"Original Size: {xyz_image.shape}")
         print(f"Cropped Size:  {xyz_cropped.shape}")
-    
-    # find all lut files in the path
-    lut_files = [f for f in os.listdir(lut_folder_path) if f.endswith('.cube')]
-    
+
     if not lut_files:
         print("No .cube files found in the folder.")
         return
 
     print(f"Found {len(lut_files)} LUTs.")
-    
+
     # To Tensor (Normalize 16bit -> float)
     # We send to GPU immediately
     raw_tensor = torch.from_numpy(xyz_cropped.astype(np.float32)).to(device) / 65535.0
 
     # Compile
     processor = torch.compile(FLog2Pipeline(), mode="reduce-overhead").to(device)
-    
+
     # --- Step B: GPU Accelerated (Raw -> F-Log2) ---
     with torch.inference_mode():
-        flog2_img, gain_applied = processor(raw_tensor)
-        
+        flog2_img, gain_applied = processor(raw_tensor, ev_offset=exposure)
+
         # --- Step C: GPU Accelerated (LUT Application) ---
-        # Note: We usually compile the LUT applier per LUT, or just use functional grid_sample 
+        # Note: We usually compile the LUT applier per LUT, or just use functional grid_sample
         # if swapping LUTs frequently to avoid re-compiling every time.
-        for lut_file in lut_files:
-            lut_path = os.path.join(lut_folder_path, lut_file)
-            lut_name = os.path.splitext(lut_file)[0]
+        for lut_path in lut_files:
+            lut_name = os.path.splitext(os.path.basename(lut_path))[0]
 
             # Load LUT (CPU)
             lut_obj = colour.read_LUT(lut_path)
             # Assume .cube is valid, extract table
             lut_np = lut_obj.table.astype(np.float32)
-            
+
             # Create applier
             lut_applier = LUT3DApplier(lut_np).to(device)
-            # JIT Compile the LUT applier? 
-            # If LUT size changes, this triggers recompilation. 
+            # JIT Compile the LUT applier?
+            # If LUT size changes, this triggers recompilation.
             # If LUT size is constant (e.g. 33x33x33), this is very fast.
             lut_applier = torch.compile(lut_applier)
-            
+
             # Reshape image for grid_sample: (H, W, C) -> (1, H, W, C)
             batch_img = flog2_img.unsqueeze(0)
-            
+
             final_img = lut_applier(batch_img)
-            
+
             # Squeeze back
             final_img = final_img.squeeze(0)
 
@@ -249,13 +245,13 @@ def process_pipeline(image_path, lut_folder_path, output_path):
             # Convert back to uint8 cpu numpy (jpeg)
             final_np = (final_img * 255).clamp(0, 255).cpu().numpy().astype(np.uint8)
 
-            out_name = f"{base_name}_{lut_name}.jpeg"     
-            iio.imwrite(output_path + "/" + out_name, final_np, quality=90)
+            out_name = f"{base_name}_{lut_name}.jpeg"
+            iio.imwrite(os.path.join(output_path, out_name), final_np, quality=90)
 
             # --- Step E: Report
             print(f"  -> Auto-Exposure Applied Gain: {gain_applied:.4f}")
             print(f"  -> Equivalent ISO Push: {np.log2(gain_applied):.2f} stops")
-            print(f"  -> Saved to {output_path}")
+            print(f"  -> Saved to {os.path.join(output_path, out_name)}")
 
 
 def main():
@@ -264,14 +260,15 @@ def main():
     2. Define folder containing your .cube files
     """
     parser = argparse.ArgumentParser(description="A PyTorch program that applies LUTs on RAW image")
-    
+
     # Add arguments
-    parser.add_argument("-i", "--image", type=str, help="Path to target raw image.")
-    parser.add_argument("-l", "--lut", type=str, help="Folder that contains LUTs.")
+    parser.add_argument("-i", "--image", type=str, required=True, help="Path to target raw image.")
+    parser.add_argument("--luts", type=str, nargs='+', required=True, help="List of paths to LUT files.")
     parser.add_argument("-o", "--output", type=str, default="./",  help="Folder that stores converted images.")
+    parser.add_argument("--exposure", type=float, default=0.0, help="Manual exposure compensation in EV.")
     args = parser.parse_args()
 
-    process_pipeline(args.image, args.lut, args.output)
+    process_pipeline(args.image, args.luts, args.output, args.exposure)
 
 if __name__ == "__main__":
     main()
