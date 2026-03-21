@@ -2,6 +2,7 @@
 *.tiff
 *.jpeg
 *.png
+*:Zone.Identifier
 
 # torch debug logs
 torch_compile_debug/
