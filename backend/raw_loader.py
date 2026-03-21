@@ -27,20 +27,20 @@ def _load_raw_to_xyz(path: str) -> np.ndarray:
     import rawpy
 
     with rawpy.imread(path) as raw:
-        rgb = raw.postprocess(
+        params = rawpy.Params(
             use_camera_wb=False,
             use_auto_wb=False,
             no_auto_bright=True,
+            output_color=rawpy.ColorSpace.XYZ,
             output_bps=16,
-            gamma=(1, 1),
+            gamma=[1, 1],
             user_black=None,
             user_sat=None,
-            dcb_iteration=False,
+            dcb_iterations=0,
             dcb_enhance=False,
-            faa_reduction=False,
             median_filter_passes=0,
-            erfc_reduce_noise=False,
         )
+        rgb = raw.postprocess(params)
         rgb_f = rgb.astype(np.float32) / 65535.0
         rgb_f = np.clip(rgb_f, 0.0, 1.0)
 
