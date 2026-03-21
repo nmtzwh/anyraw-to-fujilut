@@ -32,7 +32,8 @@ def parse_cube(fp: io.BytesIO | io.RawIOBase) -> np.ndarray:
             f"LUT_3D_SIZE implied N={n} but got {len(lines)} values (expected {expected})"
         )
 
-    return np.array(lines, dtype=np.float32).reshape((n, n, n, 3))
+    lut = np.array(lines, dtype=np.float32).reshape((n, n, n, 3))
+    return np.transpose(lut, (2, 1, 0, 3))
 
 
 __all__ = ["parse_cube"]
