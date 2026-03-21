@@ -1,19 +1,35 @@
 import base64
 import io
 import os
+import sys
 import tempfile
+from contextlib import asynccontextmanager
 from typing import List
+
+# When run as `python backend/main.py`, the parent dir isn't on sys.path,
+# so `backend` can't be imported as a package.  Fix: add the repo root.
+if __package__ is None:
+    _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _repo_root not in sys.path:
+        sys.path.insert(0, _repo_root)
 
 import numpy as np
 import imageio.v3 as iio
 from fastapi import FastAPI, File, UploadFile, HTTPException
 
-from . import pipeline as pipe
-from . import models
-from .cube_parser import parse_cube
-from .raw_loader import load_image_to_xyz
+from backend import pipeline as pipe
+from backend import models
+from backend.cube_parser import parse_cube
+from backend.raw_loader import load_image_to_xyz
 
-app = FastAPI(title="FujiLUT Backend")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    pipe.prewarm()
+    yield
+
+
+app = FastAPI(title="FujiLUT Backend", lifespan=lifespan)
 
 origins = ["http://localhost", "http://127.0.0.1"]
 
@@ -27,11 +43,6 @@ def _process_image(image_path: str, lut_table: np.ndarray) -> bytes:
     buf = io.BytesIO()
     iio.imwrite(buf, out_u8, format="jpeg", quality=90)
     return buf.getvalue()
-
-
-@app.on_event("startup")
-async def startup_event():
-    pipe.prewarm()
 
 
 @app.get("/health")
