@@ -195,8 +195,8 @@ def process_pipeline(image_path, lut_files, output_path, exposure):
             output_bps=16
         )
         xyz_cropped = crop_raw_with_flips(xyz_image, raw.sizes)
-        print(f"Original Size: {xyz_image.shape}")
-        print(f"Cropped Size:  {xyz_cropped.shape}")
+    print(f"Original Size: {xyz_image.shape}")
+    print(f"Cropped Size:  {xyz_cropped.shape}")
 
     if not lut_files:
         print("No .cube files found in the folder.")

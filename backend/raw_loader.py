@@ -11,43 +11,53 @@ SUPPORTED_TIFF = {".TIFF", ".TIF"}
 SUPPORTED_IMG = {".JPG", ".JPEG", ".PNG"}
 
 
-def crop_raw_with_flips(xyz_img: np.ndarray, imagesize) -> np.ndarray:
-    """Crop the image to the effective area, accounting for sensor flip orientation."""
+def crop_raw_with_flips(xyz_img: np.ndarray, imagesize, shrink: int = 1) -> np.ndarray:
+    """Crop the image to the effective area, accounting for sensor flip orientation and shrink factor."""
     flip = imagesize.flip
+    
+    # Scale margins and dimensions by the shrink factor
+    s_left = imagesize.crop_left_margin // shrink
+    s_top = imagesize.crop_top_margin // shrink
+    s_width = imagesize.crop_width // shrink
+    s_height = imagesize.crop_height // shrink
+    
+    # Scale total dimensions if needed (for flips that use raw_width/height)
+    s_raw_w = imagesize.raw_width // shrink
+    s_raw_h = imagesize.raw_height // shrink
 
     match flip:
         case 0:
-            left = imagesize.crop_left_margin
-            top = imagesize.crop_top_margin
-            right = left + imagesize.crop_width
-            bottom = top + imagesize.crop_height
+            left = s_left
+            top = s_top
+            right = left + s_width
+            bottom = top + s_height
             return xyz_img[top:bottom, left:right]
         case 3:
-            left = imagesize.raw_width - imagesize.crop_left_margin - imagesize.crop_width
-            top = imagesize.raw_height - imagesize.crop_top_margin - imagesize.crop_height
-            right = left + imagesize.crop_width
-            bottom = top + imagesize.crop_height
+            left = s_raw_w - s_left - s_width
+            top = s_raw_h - s_top - s_height
+            right = left + s_width
+            bottom = top + s_height
             return xyz_img[top:bottom, left:right]
         case 5:
-            left = imagesize.crop_top_margin
-            top = imagesize.raw_width - imagesize.crop_left_margin - imagesize.crop_width
-            right = left + imagesize.crop_height
-            bottom = top + imagesize.crop_width
+            left = s_top
+            top = s_raw_w - s_left - s_width
+            right = left + s_height
+            bottom = top + s_width
             return xyz_img[top:bottom, left:right]
         case 6:
-            left = imagesize.raw_height - imagesize.crop_top_margin - imagesize.crop_height
-            top = imagesize.crop_left_margin
-            right = left + imagesize.crop_height
-            bottom = top + imagesize.crop_width
+            left = s_raw_h - s_top - s_height
+            top = s_left
+            right = left + s_height
+            bottom = top + s_width
             return xyz_img[top:bottom, left:right]
         case _:
             raise ValueError(f"Unknown flip: {flip}")
 
 
-def load_image_to_xyz(path: str) -> np.ndarray:
+def load_image_to_xyz(path: str, shrink: int = 1) -> np.ndarray:
     ext = os.path.splitext(path)[1].upper()
     if ext in SUPPORTED_RAW:
-        return _load_raw_to_xyz(path)
+        return _load_raw_to_xyz(path, shrink=shrink)
     elif ext in SUPPORTED_TIFF:
         return _load_tiff_to_xyz(path)
     elif ext in SUPPORTED_IMG:
@@ -56,42 +66,32 @@ def load_image_to_xyz(path: str) -> np.ndarray:
         raise ValueError(f"Unsupported image extension: {ext}")
 
 
-def _load_raw_to_xyz(path: str) -> np.ndarray:
+def _load_raw_to_xyz(path: str, shrink: int = 1) -> np.ndarray:
     import rawpy
-
+    
+    # rawpy doesn't have a 'shrink' parameter in Params. 
+    # 'half_size=True' provides a 2x downsampling which is fast.
+    use_half = shrink >= 2
+    
     with rawpy.imread(path) as raw:
         params = rawpy.Params(
             use_camera_wb=True,
             no_auto_bright=True,
             bright=1.0,
-            user_sat=None,
             output_color=rawpy.ColorSpace.XYZ,
             output_bps=16,
             gamma=[1, 1],
-            dcb_iterations=0,
-            dcb_enhance=False,
-            median_filter_passes=0,
+            half_size=use_half,
         )
         rgb = raw.postprocess(params)
         rgb_f = rgb.astype(np.float32) / 65535.0
-        rgb_f = crop_raw_with_flips(rgb_f, raw.sizes)
+        
+        # The effective shrink factor for coordinate scaling is 2 if half_size was used
+        eff_shrink = 2 if use_half else 1
+        xyz_cropped = crop_raw_with_flips(rgb_f, raw.sizes, shrink=eff_shrink)
 
-    M_rgb_to_xyz = np.array(
-        [
-            [0.4124564, 0.3575761, 0.1374375],
-            [0.2126729, 0.7151522, 0.0721750],
-            [0.0193339, 0.1191920, 0.9503041],
-        ],
-        dtype=np.float32,
-    )
-
-    H, W, _ = rgb_f.shape
-    xyz = rgb_f.reshape(-1, 3) @ M_rgb_to_xyz.T
-    max_val = xyz.max()
-    if max_val > 0:
-        xyz = xyz / max_val
-    xyz = np.clip(xyz, 0.0, 1.0)
-    return xyz.reshape(H, W, 3).astype(np.float32)
+    xyz = np.clip(xyz_cropped, 0.0, 1.0)
+    return xyz.astype(np.float32)
 
 
 def _load_tiff_to_xyz(path: str) -> np.ndarray:

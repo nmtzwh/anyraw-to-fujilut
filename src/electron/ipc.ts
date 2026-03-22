@@ -83,16 +83,25 @@ export function registerIpcHandlers(): void {
     "backend:convert",
     async (
       _ev: IpcMainInvokeEvent,
-      payload: { imageBuffer: ArrayBuffer; imageName: string; lutBuffers: ArrayBuffer[]; lutNames: string[] }
+      payload: { 
+        imageBuffer: ArrayBuffer; 
+        imageName: string; 
+        lutBuffers: ArrayBuffer[]; 
+        lutNames: string[];
+        preview?: boolean;
+        evOffset?: number;
+      }
     ): Promise<ConvertResponse> => {
       if (simulateConvertError) {
         throw new Error("Simulated backend error — inject backend:simulateError(false) to disable");
       }
-      const { imageBuffer, imageName, lutBuffers, lutNames } = payload;
+      const { imageBuffer, imageName, lutBuffers, lutNames, preview = true, evOffset = 0 } = payload;
 
       const form = new FormData();
       const imageBlob = new Blob([imageBuffer], { type: "application/octet-stream" });
       form.append("image", imageBlob, imageName);
+      form.append("preview", preview ? "true" : "false");
+      form.append("ev_offset", evOffset.toString());
 
       for (let i = 0; i < lutBuffers.length; i++) {
         const lutBlob = new Blob([lutBuffers[i]], { type: "text/plain" });
@@ -104,6 +113,30 @@ export function registerIpcHandlers(): void {
         throw new Error(`Convert failed: ${resp.status} ${resp.statusText}`);
       }
       return resp.json() as Promise<ConvertResponse>;
+    }
+  );
+
+  ipcMain.handle(
+    "backend:export",
+    async (
+      _ev: IpcMainInvokeEvent,
+      payload: { imagePath: string; lutPaths: string[]; outputDir: string; evOffset: number }
+    ): Promise<{ count: number; message: string }> => {
+      const { imagePath, lutPaths, outputDir, evOffset } = payload;
+      const resp = await fetch(`${BACKEND_ORIGIN}/export`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          image_path: imagePath,
+          lut_paths: lutPaths,
+          output_dir: outputDir,
+          ev_offset: evOffset,
+        }),
+      });
+      if (!resp.ok) {
+        throw new Error(`Export failed: ${resp.status} ${resp.statusText}`);
+      }
+      return resp.json() as Promise<{ count: number; message: string }>;
     }
   );
 
@@ -138,6 +171,14 @@ export function registerIpcHandlers(): void {
       return result.filePath;
     }
   );
+
+  ipcMain.handle("dialog:selectDirectory", async (): Promise<string | null> => {
+    const result = await dialog.showOpenDialog({
+      properties: ["openDirectory"],
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
+  });
 
   // ── Read file as ArrayBuffer (renderer can't access fs directly) ───────────
   ipcMain.handle("fs:readFile", async (_ev: IpcMainInvokeEvent, filePath: string): Promise<ArrayBuffer> => {

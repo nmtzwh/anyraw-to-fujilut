@@ -18,3 +18,15 @@ class ConvertResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str  # "ok"
     version: str
+
+
+class ExportRequest(BaseModel):
+    image_path: str
+    lut_paths: List[str]
+    output_dir: str
+    ev_offset: float = 0.0
+
+
+class ExportResponse(BaseModel):
+    count: int
+    message: str

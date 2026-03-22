@@ -132,7 +132,7 @@ function createWindow(): BrowserWindow {
     win.loadFile(path.join((process as NodeJS.Process & { resourcesPath?: string }).resourcesPath ?? "", "public", "index.html"));
   }
 
-  win.webContents.on("did-fail-load", (_ev: Event, errorCode: number, errorDescription: string) => {
+  win.webContents.on("did-fail-load", (_ev: any, errorCode: number, errorDescription: string) => {
     console.error(`[main] Failed to load: ${errorCode} — ${errorDescription}`);
   });
 

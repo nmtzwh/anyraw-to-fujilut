@@ -8,6 +8,8 @@ export interface ConvertPayload {
   imageName: string;
   lutBuffers: ArrayBuffer[];
   lutNames: string[];
+  preview?: boolean;
+  evOffset?: number;
 }
 
 export interface HealthResponse {
@@ -33,11 +35,13 @@ export interface ElectronAPI {
   backend: {
     health: () => Promise<HealthResponse>;
     convert: (payload: ConvertPayload) => Promise<ConvertResponse>;
+    export: (payload: { imagePath: string; lutPaths: string[]; outputDir: string; evOffset: number }) => Promise<{ count: number; message: string }>;
     simulateError: (enabled: boolean) => Promise<void>;
   };
   dialog: {
     openFile: (filters?: FileFilter[], allowMultiple?: boolean) => Promise<string | string[] | null>;
     saveFile: (defaultPath?: string) => Promise<string | null>;
+    selectDirectory: () => Promise<string | null>;
   };
   fs: {
     readFile: (path: string) => Promise<ArrayBuffer>;

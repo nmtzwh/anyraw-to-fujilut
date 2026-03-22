@@ -15,7 +15,8 @@ if __package__ is None:
 
 import numpy as np
 import imageio.v3 as iio
-from fastapi import FastAPI, File, UploadFile, HTTPException
+import traceback
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 
 from backend import pipeline as pipe
 from backend import models
@@ -34,9 +35,9 @@ app = FastAPI(title="FujiLUT Backend", lifespan=lifespan)
 origins = ["http://localhost", "http://127.0.0.1"]
 
 
-def _process_image(image_path: str, lut_table: np.ndarray) -> bytes:
-    xyz = load_image_to_xyz(image_path)
-    gain = pipe.get_exposure_gain(xyz)
+def _process_image(image_path: str, lut_table: np.ndarray, shrink: int = 1, ev_offset: float = 0.0) -> bytes:
+    xyz = load_image_to_xyz(image_path, shrink=shrink)
+    gain = pipe.get_exposure_gain(xyz, ev_offset=ev_offset)
     xyz_exposed = xyz * gain
     rec2020 = pipe.xyz_to_rec2020(xyz_exposed)
     flog2 = pipe.apply_flog2_curve(rec2020)
@@ -47,6 +48,18 @@ def _process_image(image_path: str, lut_table: np.ndarray) -> bytes:
     return buf.getvalue()
 
 
+def _batch_export_image(image_path: str, lut_table: np.ndarray, save_path: str, ev_offset: float = 0.0):
+    # Always full resolution for export
+    xyz = load_image_to_xyz(image_path, shrink=1)
+    gain = pipe.get_exposure_gain(xyz, ev_offset=ev_offset)
+    xyz_exposed = xyz * gain
+    rec2020 = pipe.xyz_to_rec2020(xyz_exposed)
+    flog2 = pipe.apply_flog2_curve(rec2020)
+    graded = pipe.apply_lut(flog2, lut_table)
+    out_u8 = (np.clip(graded, 0.0, 1.0) * 255.0).astype(np.uint8)
+    iio.imwrite(save_path, out_u8, format="jpeg", quality=95)
+
+
 @app.get("/health")
 async def health():
     return models.HealthResponse(status="ok", version="1.0.0")
@@ -54,7 +67,10 @@ async def health():
 
 @app.post("/convert")
 async def convert(
-    image: UploadFile = File(default=None), luts: List[UploadFile] = File(default=None)
+    image: UploadFile = File(default=None),
+    luts: List[UploadFile] = File(default=None),
+    preview: bool = Form(default=True),
+    ev_offset: float = Form(default=0.0),
 ):
     if image is None or luts is None or len(luts) == 0:
         raise HTTPException(status_code=422, detail="Missing image or LUTs")
@@ -67,9 +83,11 @@ async def convert(
             img_tmp.write(await image.read())
 
         results = []
+        # Use shrink=4 for previews, 1 for full resolution
+        shrink = 4 if preview else 1
         for lut in luts:
             lut_table = parse_cube(io.BytesIO(await lut.read()))
-            jpeg_bytes = _process_image(img_tmp_path, lut_table)
+            jpeg_bytes = _process_image(img_tmp_path, lut_table, shrink=shrink, ev_offset=ev_offset)
             lut_name = os.path.splitext(lut.filename or "output")[0]
             results.append(
                 models.ConvertResult(
@@ -83,6 +101,7 @@ async def convert(
     except HTTPException:
         raise
     except Exception as e:
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         if img_tmp_path:
@@ -90,6 +109,36 @@ async def convert(
                 os.unlink(img_tmp_path)
             except OSError:
                 pass
+
+
+@app.post("/export")
+async def export_batch(req: models.ExportRequest):
+    try:
+        if not os.path.exists(req.output_dir):
+            os.makedirs(req.output_dir, exist_ok=True)
+
+        count = 0
+        base_name = os.path.splitext(os.path.basename(req.image_path))[0]
+
+        for lut_path in req.lut_paths:
+            if not os.path.exists(lut_path):
+                continue
+
+            with open(lut_path, "rb") as f:
+                lut_table = parse_cube(f)
+
+            lut_name = os.path.splitext(os.path.basename(lut_path))[0]
+            save_name = f"{base_name}_{lut_name}.jpeg"
+            save_path = os.path.join(req.output_dir, save_name)
+
+            _batch_export_image(req.image_path, lut_table, save_path, ev_offset=req.ev_offset)
+            count += 1
+
+        return models.ExportResponse(
+            count=count, message=f"Exported {count} images to {req.output_dir}"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":

@@ -14,6 +14,8 @@ export interface ConvertPayload {
   imageName: string;
   lutBuffers: ArrayBuffer[];
   lutNames: string[];
+  preview?: boolean;
+  evOffset?: number;
 }
 
 export interface HealthResponse {
@@ -39,11 +41,13 @@ export interface ElectronAPI {
   backend: {
     health: () => Promise<HealthResponse>;
     convert: (payload: ConvertPayload) => Promise<ConvertResponse>;
+    export: (payload: { imagePath: string; lutPaths: string[]; outputDir: string; evOffset: number }) => Promise<{ count: number; message: string }>;
     simulateError: (enabled: boolean) => Promise<void>;
   };
   dialog: {
     openFile: (filters?: FileFilter[], allowMultiple?: boolean) => Promise<string | string[] | null>;
     saveFile: (defaultPath?: string) => Promise<string | null>;
+    selectDirectory: () => Promise<string | null>;
   };
   fs: {
     readFile: (path: string) => Promise<ArrayBuffer>;
@@ -58,11 +62,13 @@ const api: ElectronAPI = {
   backend: {
     health: () => ipcRenderer.invoke("backend:health"),
     convert: (payload: ConvertPayload) => ipcRenderer.invoke("backend:convert", payload),
+    export: (payload: { imagePath: string; lutPaths: string[]; outputDir: string }) => ipcRenderer.invoke("backend:export", payload),
     simulateError: (enabled: boolean) => ipcRenderer.invoke("backend:simulateError", enabled),
   },
   dialog: {
     openFile: (filters?: FileFilter[], allowMultiple?: boolean) => ipcRenderer.invoke("dialog:openFile", filters, allowMultiple),
     saveFile: (defaultPath?: string) => ipcRenderer.invoke("dialog:saveFile", defaultPath),
+    selectDirectory: () => ipcRenderer.invoke("dialog:selectDirectory"),
   },
   fs: {
     readFile: (path: string) => ipcRenderer.invoke("fs:readFile", path) as Promise<ArrayBuffer>,
