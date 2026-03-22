@@ -190,6 +190,15 @@ export function registerIpcHandlers(): void {
     return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
   });
 
+  // ── Re-approve paths from previous session ────────────────────────────────
+  ipcMain.handle("fs:approveReadPaths", (_ev: IpcMainInvokeEvent, paths: string[]): void => {
+    for (const p of paths) {
+      if (typeof p === "string" && p.length > 0) {
+        approvedReadPaths.add(p);
+      }
+    }
+  });
+
   // ── Write bytes to a path (for exporting results) ───────────────────────────
   ipcMain.handle("fs:writeFile", async (_ev: IpcMainInvokeEvent, path: string, buffer: ArrayBuffer): Promise<void> => {
     if (!approvedWritePaths.has(path)) {

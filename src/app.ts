@@ -16,6 +16,7 @@ interface ConversionResult {
   lutName: string;
   dataUrl: string;
   selected: boolean;
+  loading?: boolean;
 }
 
 let rawFilePath: string | null = null;
@@ -25,6 +26,7 @@ let lutNames: string[] = [];
 let results: ConversionResult[] = [];
 let currentEvOffset = 0;
 let currentViewMode: 'single' | 'grid' = 'single';
+let selectedResultIdx = 0;
 
 function showErrorModal(msg: string): void {
   const modal = qe<HTMLDivElement>("error-modal");
@@ -113,64 +115,93 @@ async function startConversion(evOffset?: number): Promise<void> {
     return;
   }
 
-  setProgress(15);
-  setStatus("Reading LUT files\u2026");
+  setProgress(10);
+  setStatus("Preparing LUTs\u2026");
 
-  let lutBuffers: ArrayBuffer[];
-  try {
-    lutBuffers = await Promise.all(lutFilePaths.map((p) => api.fs.readFile(p)));
-  } catch (err) {
-    setStatus(`Failed to read LUT: ${(err as Error).message}`, true);
-    enableControls(true);
-    return;
-  }
+  // Initialize results with placeholders
+  const selectAllCb = qe<HTMLInputElement>("select-all-cb");
+  const initiallySelected = selectAllCb ? selectAllCb.checked : true;
+  
+  results = lutNames.map(name => ({
+    lutName: name,
+    dataUrl: "",
+    selected: initiallySelected,
+    loading: true
+  }));
+  
+  displayResults(); // Show placeholders immediately
 
-  setProgress(25);
-  setStatus("Generating previews\u2026");
-
-  let response: any;
-  try {
-    response = await api.backend.convert({
-      imageBuffer,
-      imageName: rawFileName ?? "image",
-      lutBuffers,
-      lutNames,
-      preview: true,
-      evOffset: currentEvOffset,
-    } as any);
-  } catch (err) {
-    showErrorModal(`Backend error: ${(err as Error).message}`);
-    enableControls(true);
-    return;
-  }
-
-  setProgress(90);
-  try {
-    if (!response || !Array.isArray(response.results)) {
-      throw new Error("Invalid response from backend: expected results array");
-    }
+  // Process one by one
+  for (let i = 0; i < lutFilePaths.length; i++) {
+    const path = lutFilePaths[i];
+    const name = lutNames[i];
     
-    // Automatically select all on initial conversion
-    const selectAllCb = qe<HTMLInputElement>("select-all-cb");
-    if (selectAllCb && !selectAllCb.checked && results.length === 0) {
-        selectAllCb.checked = true;
-    }
+    setStatus(`Applying LUT ${i + 1}/${lutNames.length}: ${name}\u2026`);
+    const progress = 10 + Math.floor((i / lutFilePaths.length) * 85);
+    setProgress(progress);
 
-    results = response.results.map((r: any) => ({
-      lutName: r.lut_name,
-      dataUrl: `data:image/jpeg;base64,${r.image_base64_jpeg}`,
-      selected: selectAllCb ? selectAllCb.checked : true,
-    }));
-  } catch (err) {
-    showErrorModal(`Failed to parse backend response: ${(err as Error).message}`);
-    enableControls(true);
-    return;
+    try {
+      const lutBuffer = await api.fs.readFile(path);
+      const response = await api.backend.convert({
+        imageBuffer,
+        imageName: rawFileName ?? "image",
+        lutBuffers: [lutBuffer],
+        lutNames: [name],
+        preview: true,
+        evOffset: currentEvOffset,
+      } as any);
+
+      if (response && Array.isArray(response.results) && response.results.length > 0) {
+        const r = response.results[0];
+        const res = results[i];
+        res.lutName = r.lut_name;
+        res.dataUrl = `data:image/jpeg;base64,${r.image_base64_jpeg}`;
+        res.loading = false;
+        updateResultUI(i);
+      }
+    } catch (err) {
+      console.error(`Failed to apply LUT ${name}:`, err);
+      results[i].loading = false;
+      // We could show an error icon here, but for now just stop loading
+      updateResultUI(i);
+    }
   }
 
-  displayResults();
   setProgress(100);
   setStatus(`Generated ${results.length} preview(s)`);
   enableControls(true);
+}
+
+function updateResultUI(idx: number): void {
+  const result = results[idx];
+  
+  // Update sidebar list item
+  const lutList = qe<HTMLUListElement>("lut-list");
+  const li = lutList?.children[idx] as HTMLElement | undefined;
+  if (li) {
+    li.className = result.loading ? "lut-item loading" : "lut-item";
+    const img = li.querySelector("img");
+    if (img) img.src = result.dataUrl;
+  }
+
+  // Update grid item
+  const grid = qe<HTMLDivElement>("grid-container");
+  const gridItem = grid?.children[idx] as HTMLElement | undefined;
+  if (gridItem) {
+    gridItem.className = result.loading ? "grid-item loading" : "grid-item";
+    if (result.selected) gridItem.classList.add("export-selected");
+    
+    const img = gridItem.querySelector("img");
+    if (img) {
+      img.src = result.dataUrl;
+      img.style.visibility = result.loading ? "hidden" : "visible";
+    }
+  }
+  
+  // If the currently selected item is done, refresh it
+  if (idx === selectedResultIdx) {
+      showPreview(idx);
+  }
 }
 
 function updateViewModeUI() {
@@ -232,12 +263,13 @@ function displayResults(): void {
 
   results.forEach((result, idx) => {
     const li = document.createElement("li");
-    li.className = "lut-item";
+    li.className = result.loading ? "lut-item loading" : "lut-item";
     li.innerHTML = `
-        <img src="${result.dataUrl}" alt="${result.lutName}">
+        <img src="${result.dataUrl || ''}" alt="${result.lutName}">
         <span class="lut-item-name">${result.lutName}</span>
     `;
     li.addEventListener("click", () => {
+        if (results[idx].loading) return;
         currentViewMode = 'single';
         updateViewModeUI();
         showPreview(idx);
@@ -245,12 +277,12 @@ function displayResults(): void {
     lutList?.appendChild(li);
 
     const gridItem = document.createElement("div");
-    gridItem.className = "grid-item";
+    gridItem.className = result.loading ? "grid-item loading" : "grid-item";
     if (result.selected) gridItem.classList.add("export-selected");
     
     gridItem.innerHTML = `
         <div class="grid-item-img-wrapper">
-            <img src="${result.dataUrl}" alt="${result.lutName}">
+            <img src="${result.dataUrl || ''}" alt="${result.lutName}" style="${result.loading ? 'visibility:hidden' : ''}">
             <div class="grid-item-badge">${result.lutName}</div>
             <div class="grid-item-export-check"></div>
         </div>
@@ -258,6 +290,7 @@ function displayResults(): void {
 
     const imgWrapper = gridItem.querySelector("img");
     imgWrapper?.addEventListener("click", () => {
+        if (results[idx].loading) return;
         currentViewMode = 'single';
         updateViewModeUI();
         showPreview(idx);
@@ -281,11 +314,23 @@ function displayResults(): void {
 }
 
 function showPreview(idx: number): void {
+  selectedResultIdx = idx;
   const img = qe<HTMLImageElement>("preview-image");
-  if (!img) return;
+  const container = document.querySelector(".preview-content");
+  if (!img || !container) return;
 
   const result = results[idx];
-  img.src = result.dataUrl;
+  if (!result) return;
+
+  if (result.loading) {
+    container.classList.add("loading");
+    img.src = "";
+    img.style.visibility = "hidden";
+  } else {
+    container.classList.remove("loading");
+    img.src = result.dataUrl;
+    img.style.visibility = "visible";
+  }
 
   const lutList = qe<HTMLUListElement>("lut-list");
   lutList?.querySelectorAll(".lut-item").forEach((el, i) => {
@@ -302,11 +347,15 @@ function showPreview(idx: number): void {
 
 async function exportSelected(): Promise<void> {
   const selectedIndices = results
-    .map((r, i) => (r.selected ? i : -1))
+    .map((r, i) => (r.selected && !r.loading ? i : -1))
     .filter((i) => i !== -1);
 
   if (selectedIndices.length === 0) {
-    setStatus("No images selected for export.", true);
+    if (results.some(r => r.loading)) {
+        setStatus("Please wait for conversions to finish.", true);
+    } else {
+        setStatus("No images selected for export.", true);
+    }
     return;
   }
 
@@ -316,20 +365,31 @@ async function exportSelected(): Promise<void> {
   if (!outputDir) return;
 
   enableControls(false);
-  setProgress(10);
-  setStatus("Starting high-resolution export\u2026");
+  setProgress(5);
+  setStatus(`Preparing to export ${selectedIndices.length} image(s)\u2026`);
 
+  let exportedCount = 0;
   try {
-    const selectedLutPaths = selectedIndices.map(i => lutFilePaths[i]);
-    const res = await api.backend.export({
-      imagePath: rawFilePath,
-      lutPaths: selectedLutPaths,
-      outputDir,
-      evOffset: currentEvOffset,
-    });
-    setStatus(res.message);
+    for (let i = 0; i < selectedIndices.length; i++) {
+        const idx = selectedIndices[i];
+        const lutPath = lutFilePaths[idx];
+        const lutName = lutNames[idx];
+        
+        setStatus(`Exporting ${i + 1}/${selectedIndices.length}: ${lutName}\u2026`);
+        
+        await api.backend.export({
+          imagePath: rawFilePath,
+          lutPaths: [lutPath],
+          outputDir,
+          evOffset: currentEvOffset,
+        });
+        
+        exportedCount++;
+        setProgress(5 + Math.floor((exportedCount / selectedIndices.length) * 95));
+    }
+    setStatus(`Successfully exported ${exportedCount} image(s) to ${outputDir}`);
   } catch (err) {
-    setStatus(`Export failed: ${(err as Error).message}`, true);
+    setStatus(`Export failed after ${exportedCount} image(s): ${(err as Error).message}`, true);
   } finally {
     setProgress(100);
     enableControls(true);
@@ -376,6 +436,7 @@ function init(): void {
         try {
             const paths = JSON.parse(savedLuts);
             if (Array.isArray(paths) && paths.length > 0) {
+                await api.fs.approveReadPaths(paths);
                 selectLutFiles(paths);
             }
         } catch (e) {

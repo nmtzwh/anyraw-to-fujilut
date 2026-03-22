@@ -52,6 +52,7 @@ export interface ElectronAPI {
   fs: {
     readFile: (path: string) => Promise<ArrayBuffer>;
     writeFile: (path: string, buffer: ArrayBuffer) => Promise<void>;
+    approveReadPaths: (paths: string[]) => Promise<void>;
   };
   shell: {
     openExternal: (url: string) => Promise<void>;
@@ -74,6 +75,7 @@ const api: ElectronAPI = {
     readFile: (path: string) => ipcRenderer.invoke("fs:readFile", path) as Promise<ArrayBuffer>,
     writeFile: (path: string, buffer: ArrayBuffer) =>
       ipcRenderer.invoke("fs:writeFile", path, buffer),
+    approveReadPaths: (paths: string[]) => ipcRenderer.invoke("fs:approveReadPaths", paths),
   },
   shell: {
     openExternal: (url: string) => ipcRenderer.invoke("shell:openExternal", url),

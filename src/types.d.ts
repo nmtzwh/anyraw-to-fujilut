@@ -46,6 +46,7 @@ export interface ElectronAPI {
   fs: {
     readFile: (path: string) => Promise<ArrayBuffer>;
     writeFile: (path: string, buffer: ArrayBuffer) => Promise<void>;
+    approveReadPaths: (paths: string[]) => Promise<void>;
   };
   shell: {
     openExternal: (url: string) => Promise<void>;

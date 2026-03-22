@@ -93,6 +93,11 @@ body {
 
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
 
+@keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+}
+
 /* Buttons */
 .header-controls {
     display: flex;
@@ -237,6 +242,16 @@ button:disabled {
     transition: opacity 0.3s ease;
 }
 
+.preview-content.loading {
+    background: linear-gradient(90deg, #10121a 25%, #1a1d24 50%, #10121a 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite linear;
+}
+
+.preview-content.loading .preview-image {
+    visibility: hidden;
+}
+
 .no-image-selected {
     display: flex;
     flex-direction: column;
@@ -296,6 +311,26 @@ button:disabled {
 .grid-item.selected .grid-item-img-wrapper { 
     border-color: var(--primary); 
     box-shadow: 0 0 0 2px rgba(79, 138, 255, 0.3), 0 8px 16px rgba(0,0,0,0.4); 
+}
+
+.grid-item.loading {
+    cursor: wait;
+    pointer-events: none;
+}
+
+.grid-item.loading .grid-item-img-wrapper {
+    background: linear-gradient(90deg, #1a1d24 25%, #2a2d35 50%, #1a1d24 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite linear;
+    border-color: rgba(255,255,255,0.05);
+}
+
+.grid-item.loading .grid-item-badge {
+    opacity: 0.5;
+}
+
+.grid-item.loading img {
+    visibility: hidden;
 }
 
 /* Add a beautiful overlay badge for LUT name */
@@ -429,6 +464,17 @@ button:disabled {
     object-fit: cover;
     border-radius: 4px;
     box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    background: #1a1d24;
+}
+
+.lut-item.loading img {
+    background: linear-gradient(90deg, #1a1d24 25%, #2a2d35 50%, #1a1d24 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite linear;
+}
+
+.lut-item.loading .lut-item-name {
+    opacity: 0.5;
 }
 
 .lut-item-name {
