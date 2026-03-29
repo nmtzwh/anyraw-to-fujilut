@@ -586,17 +586,27 @@ function init(): void {
   const ver = qe<HTMLSpanElement>("backend-version");
 
   (async () => {
-    try {
-      const health = await api.backend.health();
-      if (dot) dot.className = "status-dot ok";
-      if (lbl) lbl.textContent = `Backend ready`;
-      if (ver) {
-          ver.textContent = `v${health.version}`;
-          ver.style.display = "inline";
+    let retries = 5;
+    while (retries > 0) {
+      try {
+        const health = await api.backend.health();
+        if (dot) dot.className = "status-dot ok";
+        if (lbl) lbl.textContent = `Backend ready`;
+        if (ver) {
+            ver.textContent = `v${health.version}`;
+            ver.style.display = "inline";
+        }
+        break; // Success, exit retry loop
+      } catch (e) {
+        console.warn(`Health check failed (remaining retries: ${retries - 1}):`, e);
+        retries--;
+        if (retries === 0) {
+          if (dot) dot.className = "status-dot error";
+          if (lbl) lbl.textContent = "Backend unreachable";
+        } else {
+          await new Promise(r => setTimeout(r, 1000));
+        }
       }
-    } catch {
-      if (dot) dot.className = "status-dot error";
-      if (lbl) lbl.textContent = "Backend unreachable";
     }
     
     // Load persistent LUTs after healthcare check

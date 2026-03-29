@@ -19,7 +19,7 @@
     "typecheck:renderer": "tsc --noEmit -p tsconfig.renderer.json",
     "typecheck": "npm run typecheck:main && npm run typecheck:renderer",
     "build:main": "esbuild src/electron/main.ts src/electron/preload.ts src/electron/ipc.ts --bundle --platform=node --outdir=build/electron --external:electron --format=cjs",
-    "build:renderer": "esbuild src/app.ts src/color.ts src/lut.ts --bundle --outdir=build --format=iife --sourcemap",
+    "build:renderer": "esbuild src/app.ts src/color.ts src/lut.ts --bundle --outdir=public/build --format=iife --sourcemap",
     "build": "npm run build:main && npm run build:renderer",
     "clean": "rm -rf build",
     "start": "npm run build && electron .",

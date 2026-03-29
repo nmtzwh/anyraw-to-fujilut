@@ -26,7 +26,7 @@ from backend.raw_loader import load_image_to_xyz
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    pipe.prewarm()
+    # pipe.prewarm() # Temporarily disabled to debug startup hang
     yield
 
 
@@ -162,5 +162,10 @@ async def export_batch(req: models.ExportRequest):
 
 if __name__ == "__main__":
     import uvicorn
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=19876)
+    args = parser.parse_args()
 
-    uvicorn.run(app, host="0.0.0.0", port=19876)
+    uvicorn.run(app, host=args.host, port=args.port)

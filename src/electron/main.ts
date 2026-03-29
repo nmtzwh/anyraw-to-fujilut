@@ -27,9 +27,9 @@ let isQuitting = false;
  *  In packaged Electron, this resolves to `resources/backend/main.py`.
  */
 function resolveBackendScript(): string {
-  // Check if running as a packaged app (electron is frozen)
   if (app.isPackaged) {
-    return path.join((process as NodeJS.Process & { resourcesPath?: string }).resourcesPath ?? "", "backend", "main.py");
+    // extraResources are located in process.resourcesPath
+    return path.join(process.resourcesPath, "backend", "main.py");
   }
   // Development: backend/ is a sibling of the electron build output
   // build/electron/main.js → parent → backend/main.py
@@ -37,11 +37,14 @@ function resolveBackendScript(): string {
   return path.join(devRoot, "backend", "main.py");
 }
 
-/** Find a usable Python executable. */
 function resolvePython(): string {
+  if (app.isPackaged) {
+    // Use the bundled venv python.exe
+    return path.join(process.resourcesPath, "python-venv", "Scripts", "python.exe");
+  }
   for (const name of ["python3", "python"]) {
     try {
-      const result = require("child_process").spawnSync(name, ["--version"], {
+      const result = require("node:child_process").spawnSync(name, ["--version"], {
         stdio: "ignore",
       });
       if (result.status === 0) return name;
@@ -49,40 +52,42 @@ function resolvePython(): string {
       // try next
     }
   }
-  return "python3";
+  return "python";
 }
 
 /** Start the Python FastAPI backend subprocess. */
 function spawnBackend(): ChildProcess {
   const python = resolvePython();
   const script = resolveBackendScript();
-  console.log(`[main] Spawning backend: ${python} ${script}`);
-  const proc = spawn(python, [script], {
-    stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, PORT: String(BACKEND_PORT) },
+  const cwd = app.isPackaged ? process.resourcesPath : path.resolve(__dirname, "..", "..");
+  
+  // Use quoted paths for Windows compatibility with spaces
+  const command = `"${python}" "${script}" --host 127.0.0.1 --port ${BACKEND_PORT}`;
+  console.log(`[main] Spawning backend with exec: ${command} in ${cwd}`);
+  
+  const proc = require("node:child_process").exec(command, {
+    cwd,
+    windowsHide: true,
+    env: { 
+      ...process.env, 
+      PORT: String(BACKEND_PORT),
+      PYTHONPATH: cwd
+    },
   });
 
-  proc.stdout?.on("data", (chunk: Buffer) => {
-    process.stdout.write(`[backend] ${chunk.toString().trimEnd()}\n`);
+  proc.stdout?.on("data", (chunk: string) => {
+    process.stdout.write(`[backend] ${chunk}\n`);
   });
-  proc.stderr?.on("data", (chunk: Buffer) => {
-    process.stderr.write(`[backend:err] ${chunk.toString().trimEnd()}\n`);
-  });
-
-  proc.on("error", (err) => {
-    console.error("[main] Backend spawn error:", err);
+  proc.stderr?.on("data", (chunk: string) => {
+    process.stderr.write(`[backend:err] ${chunk}\n`);
   });
 
-  proc.on("exit", (code, signal) => {
+  proc.on("error", (err: any) => {
+    console.error("[main] Backend exec error:", err);
+  });
+
+  proc.on("exit", (code: any, signal: any) => {
     console.log(`[main] Backend exited — code=${code} signal=${signal}`);
-    if (mainWindow && !isQuitting) {
-      dialog.showErrorBox(
-        "Backend crashed",
-        `The Python backend exited unexpectedly (code=${code}).\n` +
-          "Click OK to quit the application."
-      );
-      app.quit();
-    }
   });
 
   return proc;
@@ -94,11 +99,7 @@ async function waitForBackendHealth(timeoutMs: number): Promise<void> {
   while (Date.now() < deadline) {
     try {
       const resp = await fetch(`http://${BACKEND_HOST}:${BACKEND_PORT}/health`);
-      if (resp.ok) {
-        const body = await resp.json() as { status: string; version: string };
-        console.log(`[main] Backend healthy: ${body.status} v${body.version}`);
-        return;
-      }
+      if (resp.ok) return;
     } catch {
       // not ready yet
     }
@@ -128,8 +129,10 @@ function createWindow(): BrowserWindow {
     const indexPath = path.resolve(__dirname, "..", "..", "public", "index.html");
     win.loadFile(indexPath);
   } else {
-    // Packaged: load from resources/public/
-    win.loadFile(path.join((process as NodeJS.Process & { resourcesPath?: string }).resourcesPath ?? "", "public", "index.html"));
+    // In packaged app, __dirname is dist/win-unpacked/resources/app/build/electron/
+    // public/ is in dist/win-unpacked/resources/app/public/
+    const indexPath = path.join(app.getAppPath(), "public", "index.html");
+    win.loadFile(indexPath);
   }
 
   win.webContents.on("did-fail-load", (_ev: any, errorCode: number, errorDescription: string) => {
@@ -156,32 +159,18 @@ process.on("unhandledRejection", (reason) => {
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────
 
-app.whenReady().then(async () => {
-  console.log(`[main] App ready — version ${app.getVersion()}`);
-
-  // Register IPC handlers before creating the window
+app.whenReady().then(() => {
   registerIpcHandlers();
-  console.log("[main] IPC handlers registered");
+  mainWindow = createWindow();
 
   // Spawn backend and wait for health
   backendProcess = spawnBackend();
-  try {
-    console.log(`[main] Waiting for backend health on port ${BACKEND_PORT}…`);
-    await waitForBackendHealth(BACKEND_READY_TIMEOUT_MS);
-    console.log("[main] Backend ready — creating window");
-  } catch (err) {
+  waitForBackendHealth(BACKEND_READY_TIMEOUT_MS).catch((err) => {
     console.error("[main] Backend failed to start:", err);
-    dialog.showErrorBox(
-      "Backend failed",
-      `Could not connect to the Python backend on port ${BACKEND_PORT}.\n` +
-        `Error: ${err instanceof Error ? err.message : String(err)}\n\n` +
-        "Make sure backend/requirements.txt is installed and try again."
-    );
-    app.quit();
-    return;
-  }
-
-  mainWindow = createWindow();
+    if (!isQuitting) {
+      dialog.showErrorBox("Backend error", `Could not connect to the Python backend.\n${err.message}`);
+    }
+  });
 });
 
 // Quit when all windows are closed (standard desktop pattern)

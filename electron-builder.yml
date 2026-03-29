@@ -10,12 +10,12 @@ directories:
   buildResources: build-resources
 
 files:
-  - build/**/*
+  - build/electron/**/*
   - public/**/*
   - package.json
 
 extraResources:
-  - from: ../backend
+  - from: backend
     to: backend
     filter:
       - "**/*"
@@ -43,14 +43,14 @@ win:
     - target: nsis
       arch:
         - x64
-  icon: build-resources/icon.ico
+  # icon: build-resources/icon.ico
   requestedExecutionLevel: asInvoker
 nsis:
-  oneFile: true
+  oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
-  installerIcon: build-resources/icon.ico
-  uninstallerIcon: build-resources/icon.ico
+  # installerIcon: build-resources/icon.ico
+  # uninstallerIcon: build-resources/icon.ico
   artifactName: ${productName}-${version}-win-x64.${ext}
 
 mac:

@@ -117,11 +117,24 @@ npm run start          # Launch Electron (auto-spawns Python backend)
 
 #### Build installers
 
-```bash
+```powershell
+# 1. Prepare backend dependencies
+mkdir build-resources
+python -m venv build-resources/python-venv
+.\build-resources\python-venv\Scripts\pip.exe install -r backend\requirements.txt
+
+# 2. Package
 npm run dist           # Produces:
                        #   - Windows: NSIS one-file .exe
                        #   - macOS: .dmg
                        #   - Linux: .AppImage
+```
+
+*Note: If you experience network timeouts while downloading Electron binaries, you can use a mirror:*
+```powershell
+$env:ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"
+$env:ELECTRON_BUILDER_BINARIES_MIRROR="https://npmmirror.com/mirrors/electron-builder-binaries/"
+npm run dist
 ```
 
 #### Using the GUI
