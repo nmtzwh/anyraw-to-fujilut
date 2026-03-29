@@ -28,6 +28,25 @@ let currentEvOffset = 0;
 let currentViewMode: 'single' | 'grid' = 'single';
 let selectedResultIdx = 0;
 
+let currentZoom = 1;
+let isPanning = false;
+let startX = 0, startY = 0;
+let panX = 0, panY = 0;
+let originalDataUrl: string | null = null;
+let currentFolderImages: string[] = [];
+let fetchThumbnailsGeneration = 0;
+
+function resetZoom() {
+  currentZoom = 1;
+  panX = 0; panY = 0;
+  updateZoomTransform();
+}
+
+function updateZoomTransform() {
+  const img = qe<HTMLImageElement>("preview-image");
+  if (img) img.style.transform = `translate(${panX}px, ${panY}px) scale(${currentZoom})`;
+}
+
 function showErrorModal(msg: string): void {
   const modal = qe<HTMLDivElement>("error-modal");
   const msgEl = qe<HTMLParagraphElement>("error-modal-message");
@@ -74,10 +93,87 @@ async function openRawFile(): Promise<void> {
   );
   if (!selected) return;
   const filePath = Array.isArray(selected) ? selected[0] : selected;
+  selectRawFile(filePath);
+}
+
+function selectRawFile(filePath: string) {
   rawFilePath = filePath;
   rawFileName = filePath.split(/[\\/]/).pop() ?? filePath;
   setStatus(`Selected: ${rawFileName}`);
   checkConvertReady();
+  if (lutFilePaths.length > 0) startConversion();
+}
+
+async function openFolder(): Promise<void> {
+  const dirPath = await api.dialog.selectDirectory();
+  if (!dirPath) return;
+
+  const files = await api.fs.readDir(dirPath);
+  currentFolderImages = files.sort();
+  
+  const filmstrip = qe<HTMLDivElement>("filmstrip-container");
+  if (filmstrip) {
+    if (files.length > 0) {
+      filmstrip.style.display = "flex";
+      filmstrip.innerHTML = "";
+      files.forEach((f: string, i: number) => {
+        const item = document.createElement("div");
+        item.className = "filmstrip-item";
+        item.innerHTML = `<img src="" data-path="${f}" style="display:none;"><div class="filmstrip-label">${f.split(/[\\/]/).pop()}</div>`;
+        item.addEventListener("click", () => {
+          document.querySelectorAll('.filmstrip-item').forEach(el => el.classList.remove('active'));
+          item.classList.add('active');
+          selectRawFile(f);
+        });
+        filmstrip.appendChild(item);
+      });
+      selectRawFile(files[0]);
+      filmstrip.children[0]?.classList.add('active');
+      
+      // Kick off background thumbnails
+      fetchThumbnailsGeneration++;
+      fetchThumbnails(files, fetchThumbnailsGeneration);
+
+    } else {
+      filmstrip.style.display = "none";
+      setStatus("No RAW files found in directory.", true);
+    }
+  }
+}
+
+async function fetchThumbnails(files: string[], generation: number) {
+  const filmstrip = qe<HTMLDivElement>("filmstrip-container");
+  for (const file of files) {
+      if (fetchThumbnailsGeneration !== generation) return; // Abort if a new folder is opened
+      
+      try {
+          const imgBuffer = await api.fs.readFile(file);
+          const response = await api.backend.convert({
+              imageBuffer: imgBuffer,
+              imageName: file.split(/[\\/]/).pop()!,
+              lutBuffers: [],
+              lutNames: [],
+              preview: true,
+              evOffset: 0,
+              include_original: true
+          });
+          
+          if (fetchThumbnailsGeneration !== generation) return;
+          if (response && response.results.length > 0) {
+              const dataUrl = `data:image/jpeg;base64,${response.results[0].image_base64_jpeg}`;
+              
+              if (filmstrip) {
+                  const imgEl = filmstrip.querySelector(`img[data-path="${file.replace(/\\/g, '\\\\')}"]`) as HTMLImageElement;
+                  if (imgEl) {
+                      imgEl.src = dataUrl;
+                      imgEl.style.display = "block";
+                  }
+              }
+          }
+      } catch (e) {
+          console.warn(`Failed to fetch thumbnail for ${file}`);
+      }
+  }
 }
 
 async function selectLutFiles(paths?: string[]): Promise<void> {
@@ -118,7 +214,7 @@ async function startConversion(evOffset?: number): Promise<void> {
   setProgress(10);
   setStatus("Preparing LUTs\u2026");
 
-  // Initialize results with placeholders
+  // Initialize results
   const selectAllCb = qe<HTMLInputElement>("select-all-cb");
   const initiallySelected = selectAllCb ? selectAllCb.checked : true;
   
@@ -129,7 +225,25 @@ async function startConversion(evOffset?: number): Promise<void> {
     loading: true
   }));
   
-  displayResults(); // Show placeholders immediately
+  displayResults(); 
+  originalDataUrl = null;
+  resetZoom();
+
+  // Fetch Original Base Image first
+  try {
+      const response = await api.backend.convert({
+        imageBuffer,
+        imageName: rawFileName ?? "image",
+        lutBuffers: [],
+        lutNames: [],
+        preview: true,
+        evOffset: currentEvOffset,
+        include_original: true
+      });
+      if (response && response.results.length > 0) {
+          originalDataUrl = `data:image/jpeg;base64,${response.results[0].image_base64_jpeg}`;
+      }
+  } catch(e) { console.error("Could not fetch original image", e); }
 
   // Process one by one
   for (let i = 0; i < lutFilePaths.length; i++) {
@@ -204,10 +318,59 @@ function updateResultUI(idx: number): void {
   }
 }
 
+function drawHistogram(dataUrl: string) {
+  const canvas = qe<HTMLCanvasElement>("histogram-canvas");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  
+  const img = new Image();
+  img.onload = () => {
+    const off = document.createElement("canvas");
+    off.width = 128; off.height = 128;
+    const octx = off.getContext("2d");
+    if (!octx) return;
+    octx.drawImage(img, 0, 0, 128, 128);
+    const data = octx.getImageData(0,0,128,128).data;
+    
+    const histR = new Array(256).fill(0);
+    const histG = new Array(256).fill(0);
+    const histB = new Array(256).fill(0);
+    
+    let maxCount = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      histR[data[i]]++;
+      histG[data[i+1]]++;
+      histB[data[i+2]]++;
+      maxCount = Math.max(maxCount, histR[data[i]], histG[data[i+1]], histB[data[i+2]]);
+    }
+    
+    ctx.clearRect(0,0, canvas.width, canvas.height);
+    ctx.globalCompositeOperation = 'screen';
+    
+    const w = canvas.width / 256;
+    
+    const drawChannel = (hist: number[], color: string) => {
+        ctx.fillStyle = color;
+        for (let i = 0; i < 256; i++) {
+            const h = (hist[i] / maxCount) * canvas.height;
+            ctx.fillRect(i * w, canvas.height - h, Math.ceil(w), h);
+        }
+    };
+
+    drawChannel(histR, "rgba(255, 0, 0, 0.6)");
+    drawChannel(histG, "rgba(0, 255, 0, 0.6)");
+    drawChannel(histB, "rgba(0, 0, 255, 0.6)");
+    
+    ctx.globalCompositeOperation = 'source-over';
+  };
+  img.src = dataUrl;
+}
+
 function updateViewModeUI() {
   const singleBtn = qe<HTMLButtonElement>("btn-view-single");
   const gridBtn = qe<HTMLButtonElement>("btn-view-grid");
-  const previewImg = qe<HTMLImageElement>("preview-image");
+  const previewImgWrapper = qe<HTMLDivElement>("preview-image")?.parentElement;
   const gridCont = qe<HTMLDivElement>("grid-container");
   const noImg = qe<HTMLDivElement>("no-image-selected");
 
@@ -217,16 +380,16 @@ function updateViewModeUI() {
       if (gridCont) gridCont.style.display = "none";
       
       if (results.length > 0) {
-          if (previewImg) previewImg.style.display = "block";
+          if (previewImgWrapper) previewImgWrapper.style.display = "flex";
           if (noImg) noImg.style.display = "none";
       } else {
-          if (previewImg) previewImg.style.display = "none";
+          if (previewImgWrapper) previewImgWrapper.style.display = "none";
           if (noImg) noImg.style.display = "flex";
       }
   } else {
       singleBtn?.classList.remove("active");
       gridBtn?.classList.add("active");
-      if (previewImg) previewImg.style.display = "none";
+      if (previewImgWrapper) previewImgWrapper.style.display = "none";
       if (noImg) noImg.style.display = "none";
       
       if (results.length > 0) {
@@ -330,6 +493,12 @@ function showPreview(idx: number): void {
     container.classList.remove("loading");
     img.src = result.dataUrl;
     img.style.visibility = "visible";
+    drawHistogram(result.dataUrl);
+    
+    const toggleBtn = qe<HTMLDivElement>("btn-toggle-original");
+    if (toggleBtn && originalDataUrl) {
+        toggleBtn.style.display = "block";
+    }
   }
 
   const lutList = qe<HTMLUListElement>("lut-list");
@@ -456,8 +625,12 @@ function init(): void {
   });
 
   qe<HTMLButtonElement>("btn-open-raw")?.addEventListener("click", openRawFile);
+  qe<HTMLButtonElement>("btn-open-folder")?.addEventListener("click", openFolder);
   qe<HTMLButtonElement>("btn-select-luts")?.addEventListener("click", () => selectLutFiles());
-  qe<HTMLButtonElement>("btn-convert")?.addEventListener("click", () => startConversion());
+  qe<HTMLButtonElement>("btn-convert")?.addEventListener("click", () => {
+      resetZoom();
+      startConversion();
+  });
   qe<HTMLButtonElement>("btn-export")?.addEventListener("click", exportSelected);
   qe<HTMLButtonElement>("btn-apply-exposure")?.addEventListener("click", applyExposure);
   qe<HTMLButtonElement>("btn-retry-conversion")?.addEventListener("click", () => {
@@ -474,6 +647,55 @@ function init(): void {
       currentViewMode = 'grid';
       updateViewModeUI();
   });
+
+  const toggleBtn = qe<HTMLDivElement>("btn-toggle-original");
+  const previewImg = qe<HTMLImageElement>("preview-image");
+  if (previewImg) previewImg.ondragstart = () => false;
+
+  if (toggleBtn && previewImg) {
+      const showOrig = () => { if (originalDataUrl && !results[selectedResultIdx]?.loading) { previewImg.src = originalDataUrl; drawHistogram(originalDataUrl); } };
+      const showLut = () => { if (!results[selectedResultIdx]?.loading) { previewImg.src = results[selectedResultIdx].dataUrl; drawHistogram(results[selectedResultIdx].dataUrl); } };
+      toggleBtn.addEventListener("mousedown", showOrig);
+      toggleBtn.addEventListener("mouseup", showLut);
+      toggleBtn.addEventListener("mouseleave", showLut);
+      toggleBtn.addEventListener("touchstart", showOrig);
+      toggleBtn.addEventListener("touchend", showLut);
+  }
+
+  const imgWrapper = qe<HTMLDivElement>("preview-image")?.parentElement;
+  if (imgWrapper) {
+      imgWrapper.style.touchAction = "none";
+      imgWrapper.addEventListener("wheel", (e) => {
+          if (currentViewMode !== 'single') return;
+          e.preventDefault();
+          const zoomSensitivity = 0.002;
+          currentZoom = Math.max(0.5, Math.min(5, currentZoom - e.deltaY * zoomSensitivity));
+          updateZoomTransform();
+      });
+
+      imgWrapper.addEventListener("pointerdown", (e) => {
+          if (currentViewMode !== 'single') return;
+          isPanning = true;
+          startX = e.clientX - panX;
+          startY = e.clientY - panY;
+          imgWrapper.setPointerCapture(e.pointerId);
+      });
+
+      imgWrapper.addEventListener("pointermove", (e) => {
+          if (!isPanning) return;
+          panX = e.clientX - startX;
+          panY = e.clientY - startY;
+          updateZoomTransform();
+      });
+
+      imgWrapper.addEventListener("pointerup", (e) => {
+          isPanning = false;
+          imgWrapper.releasePointerCapture(e.pointerId);
+      });
+      imgWrapper.addEventListener("pointercancel", (e) => {
+          isPanning = false;
+      });
+  }
 }
 
 document.addEventListener("DOMContentLoaded", init);

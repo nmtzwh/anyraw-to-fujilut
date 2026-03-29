@@ -71,8 +71,9 @@ async def convert(
     luts: List[UploadFile] = File(default=None),
     preview: bool = Form(default=True),
     ev_offset: float = Form(default=0.0),
+    include_original: bool = Form(default=False),
 ):
-    if image is None or luts is None or len(luts) == 0:
+    if image is None or (luts is None and not include_original) or (luts is not None and len(luts) == 0 and not include_original):
         raise HTTPException(status_code=422, detail="Missing image or LUTs")
 
     img_tmp_path = None
@@ -85,16 +86,34 @@ async def convert(
         results = []
         # Use shrink=4 for previews, 1 for full resolution
         shrink = 4 if preview else 1
-        for lut in luts:
-            lut_table = parse_cube(io.BytesIO(await lut.read()))
-            jpeg_bytes = _process_image(img_tmp_path, lut_table, shrink=shrink, ev_offset=ev_offset)
-            lut_name = os.path.splitext(lut.filename or "output")[0]
+        
+        if include_original:
+            xyz = load_image_to_xyz(img_tmp_path, shrink=shrink)
+            gain = pipe.get_exposure_gain(xyz, ev_offset=ev_offset)
+            xyz_exposed = xyz * gain
+            rec2020 = pipe.xyz_to_rec2020(xyz_exposed)
+            flog2 = pipe.apply_flog2_curve(rec2020)
+            out_u8 = (np.clip(flog2, 0.0, 1.0) * 255.0).astype(np.uint8)
+            buf = io.BytesIO()
+            iio.imwrite(buf, out_u8, format="jpeg", quality=90)
             results.append(
                 models.ConvertResult(
-                    lut_name=lut_name,
-                    image_base64_jpeg=base64.b64encode(jpeg_bytes).decode("ascii"),
+                    lut_name="__Original__",
+                    image_base64_jpeg=base64.b64encode(buf.getvalue()).decode("ascii"),
                 )
             )
+
+        if luts:
+            for lut in luts:
+                lut_table = parse_cube(io.BytesIO(await lut.read()))
+                jpeg_bytes = _process_image(img_tmp_path, lut_table, shrink=shrink, ev_offset=ev_offset)
+                lut_name = os.path.splitext(lut.filename or "output")[0]
+                results.append(
+                    models.ConvertResult(
+                        lut_name=lut_name,
+                        image_base64_jpeg=base64.b64encode(jpeg_bytes).decode("ascii"),
+                    )
+                )
 
         return models.ConvertResponse(results=results)
 

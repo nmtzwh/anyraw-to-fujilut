@@ -10,6 +10,7 @@ export interface ConvertPayload {
   lutNames: string[];
   preview?: boolean;
   evOffset?: number;
+  include_original?: boolean;
 }
 
 export interface HealthResponse {
@@ -44,6 +45,7 @@ export interface ElectronAPI {
     selectDirectory: () => Promise<string | null>;
   };
   fs: {
+    readDir: (path: string) => Promise<string[]>;
     readFile: (path: string) => Promise<ArrayBuffer>;
     writeFile: (path: string, buffer: ArrayBuffer) => Promise<void>;
     approveReadPaths: (paths: string[]) => Promise<void>;

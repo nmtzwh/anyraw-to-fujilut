@@ -90,18 +90,20 @@ export function registerIpcHandlers(): void {
         lutNames: string[];
         preview?: boolean;
         evOffset?: number;
+        include_original?: boolean;
       }
     ): Promise<ConvertResponse> => {
       if (simulateConvertError) {
         throw new Error("Simulated backend error — inject backend:simulateError(false) to disable");
       }
-      const { imageBuffer, imageName, lutBuffers, lutNames, preview = true, evOffset = 0 } = payload;
+      const { imageBuffer, imageName, lutBuffers, lutNames, preview = true, evOffset = 0, include_original = false } = payload;
 
       const form = new FormData();
       const imageBlob = new Blob([imageBuffer], { type: "application/octet-stream" });
       form.append("image", imageBlob, imageName);
       form.append("preview", preview ? "true" : "false");
       form.append("ev_offset", evOffset.toString());
+      form.append("include_original", include_original ? "true" : "false");
 
       for (let i = 0; i < lutBuffers.length; i++) {
         const lutBlob = new Blob([lutBuffers[i]], { type: "text/plain" });
@@ -178,6 +180,23 @@ export function registerIpcHandlers(): void {
     });
     if (result.canceled || result.filePaths.length === 0) return null;
     return result.filePaths[0];
+  });
+
+  // ── Read Directory for RAW files ──────────────────────────────────────────
+  ipcMain.handle("fs:readDir", async (_ev: IpcMainInvokeEvent, dirPath: string): Promise<string[]> => {
+    const fs = await import("fs/promises");
+    const path = await import("path");
+    const files = await fs.readdir(dirPath);
+    const validExts = new Set([".arw", ".dng", ".nef", ".cr2", ".cr3", ".raf", ".orf", ".rw2"]);
+    const rawFiles = [];
+    for (const f of files) {
+      if (validExts.has(path.extname(f).toLowerCase())) {
+        const full = path.join(dirPath, f);
+        approvedReadPaths.add(full);
+        rawFiles.push(full);
+      }
+    }
+    return rawFiles;
   });
 
   // ── Read file as ArrayBuffer (renderer can't access fs directly) ───────────

@@ -42,8 +42,8 @@ body {
     height: 100%;
     max-width: 1600px;
     margin: 0 auto;
-    padding: 1.5rem;
-    gap: 1.25rem;
+    padding: 1rem;
+    gap: 0.75rem;
 }
 
 /* Header */
@@ -54,7 +54,7 @@ body {
     background: var(--bg-glass);
     border: 1px solid var(--bg-glass-border);
     backdrop-filter: blur(12px);
-    padding: 0.8rem 1.5rem;
+    padding: 0.6rem 1.2rem;
     border-radius: var(--radius-lg);
     box-shadow: 0 4px 20px rgba(0,0,0,0.2);
 }
@@ -68,8 +68,9 @@ body {
 .header-left h1 {
     font-size: 1.25rem;
     font-weight: 600;
-    background: linear-gradient(135deg, #fff, #a0a6b8);
+    background: linear-gradient(135deg, var(--primary), #a2b9ff);
     -webkit-background-clip: text;
+    background-clip: text;
     -webkit-text-fill-color: transparent;
     display: flex;
     align-items: center;
@@ -168,7 +169,7 @@ button:disabled {
 /* Main Workspace */
 .main-workspace {
     display: flex;
-    gap: 1.5rem;
+    gap: 1rem;
     flex: 1;
     min-height: 0; 
 }
@@ -228,7 +229,21 @@ button:disabled {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 1.5rem;
+    padding: 1rem;
+    overflow: hidden;
+    position: relative;
+    border-radius: var(--radius-lg);
+    background-color: var(--surface);
+    border: 1px solid var(--border);
+}
+
+.preview-image-wrapper {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     overflow: hidden;
 }
 
@@ -238,18 +253,47 @@ button:disabled {
     object-fit: contain;
     border-radius: var(--radius-md);
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-    display: none;
+    display: block;
     transition: opacity 0.3s ease;
+    cursor: grab;
+    transform-origin: center center;
+}
+
+.preview-image:active {
+    cursor: grabbing;
+}
+
+.toggle-overlay {
+    position: absolute;
+    bottom: 20px;
+    right: 20px;
+    background: rgba(0,0,0,0.6);
+    backdrop-filter: blur(8px);
+    padding: 0.5rem 1rem;
+    border-radius: 20px;
+    color: white;
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid rgba(255,255,255,0.2);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    z-index: 20;
+    user-select: none;
+    transition: background 0.2s;
+    display: none;
+}
+
+.toggle-overlay:active {
+    background: var(--primary);
+    border-color: var(--primary);
 }
 
 .preview-content.loading {
-    background: linear-gradient(90deg, #10121a 25%, #1a1d24 50%, #10121a 75%);
-    background-size: 200% 100%;
-    animation: shimmer 1.5s infinite linear;
+    /* Kept clean, without shimmer */
 }
 
 .preview-content.loading .preview-image {
-    visibility: hidden;
+    opacity: 0.2;
 }
 
 .no-image-selected {
@@ -259,6 +303,30 @@ button:disabled {
     gap: 0.5rem;
     color: var(--text-muted);
     font-size: 0.875rem;
+    text-align: center;
+}
+
+.no-image-selected h2 {
+    color: #fff;
+    margin-top: 1rem;
+}
+
+.loading-spinner {
+    position: absolute;
+    width: 48px;
+    height: 48px;
+    border: 3px solid rgba(255,255,255,0.1);
+    border-radius: 50%;
+    border-top-color: var(--primary);
+    animation: spin 1s ease-in-out infinite;
+    display: none;
+    z-index: 50;
+}
+
+@keyframes spin { 100% { transform: rotate(360deg); } }
+
+.loading .loading-spinner {
+    display: block;
 }
 
 /* Grid Container */
@@ -319,9 +387,6 @@ button:disabled {
 }
 
 .grid-item.loading .grid-item-img-wrapper {
-    background: linear-gradient(90deg, #1a1d24 25%, #2a2d35 50%, #1a1d24 75%);
-    background-size: 200% 100%;
-    animation: shimmer 1.5s infinite linear;
     border-color: rgba(255,255,255,0.05);
 }
 
@@ -330,7 +395,7 @@ button:disabled {
 }
 
 .grid-item.loading img {
-    visibility: hidden;
+    opacity: 0.2;
 }
 
 /* Add a beautiful overlay badge for LUT name */
@@ -385,17 +450,17 @@ button:disabled {
 
 /* Sidebar */
 .sidebar {
-    width: 320px;
+    width: 280px;
     display: flex;
     flex-direction: column;
-    gap: 1.25rem;
+    gap: 1rem;
 }
 
 .glass-panel {
     background: var(--bg-glass);
     border: 1px solid var(--bg-glass-border);
     backdrop-filter: blur(12px);
-    padding: 1.25rem;
+    padding: 1rem;
     border-radius: var(--radius-lg);
     display: flex;
     flex-direction: column;
@@ -603,3 +668,81 @@ input[type="range"]::-webkit-slider-thumb:hover {
 .modal p { color: var(--text-muted); font-size: 0.875rem; line-height: 1.5; margin-bottom: 2rem; }
 .modal-actions { display: flex; gap: 0.75rem; justify-content: center; width: 100%; }
 .modal-actions button { flex: 1; }
+
+/* Filmstrip */
+.filmstrip {
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.5rem;
+    background: var(--bg-glass);
+    border-top: 1px solid var(--bg-glass-border);
+    overflow-x: auto;
+    overflow-y: hidden;
+    height: 100px;
+    scroll-behavior: smooth;
+}
+
+.filmstrip-item {
+    flex: 0 0 auto;
+    height: 100%;
+    aspect-ratio: 3/2;
+    background: #1a1d24;
+    border-radius: 4px;
+    border: 2px solid transparent;
+    cursor: pointer;
+    overflow: hidden;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+}
+
+.filmstrip-item img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.filmstrip-item:hover {
+    transform: translateY(-2px);
+    border-color: rgba(255,255,255,0.4);
+}
+
+.filmstrip-item.active {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(79, 138, 255, 0.4);
+}
+
+.filmstrip-label {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    background: rgba(0,0,0,0.6);
+    color: #fff;
+    font-size: 0.65rem;
+    padding: 2px 4px;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Histogram */
+.histogram-container {
+    margin-top: 1rem;
+    background: rgba(0,0,0,0.3);
+    border: 1px solid var(--bg-glass-border);
+    border-radius: 6px;
+    padding: 0.5rem;
+    height: 100px;
+    display: flex;
+    flex-direction: column;
+}
+
+#histogram-canvas {
+    width: 100%;
+    height: 100%;
+    background: transparent;
+}
