@@ -4,7 +4,7 @@ import os
 import sys
 import tempfile
 from contextlib import asynccontextmanager
-from typing import List
+from typing import List, Optional
 
 # When run as `python backend/main.py`, the parent dir isn't on sys.path,
 # so `backend` can't be imported as a package.  Fix: add the repo root.
@@ -17,11 +17,13 @@ import numpy as np
 import imageio.v3 as iio
 import traceback
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
+from pydantic import BaseModel
 
 from backend import pipeline as pipe
 from backend import models
 from backend.cube_parser import parse_cube
 from backend.raw_loader import load_image_to_xyz
+from backend.cache import PipelineCache
 
 
 @asynccontextmanager
@@ -34,27 +36,18 @@ app = FastAPI(title="FujiLUT Backend", lifespan=lifespan)
 
 origins = ["http://localhost", "http://127.0.0.1"]
 
-
-def _process_image(image_path: str, lut_table: np.ndarray, shrink: int = 1, ev_offset: float = 0.0) -> bytes:
-    xyz = load_image_to_xyz(image_path, shrink=shrink)
-    gain = pipe.get_exposure_gain(xyz, ev_offset=ev_offset)
-    xyz_exposed = xyz * gain
-    rec2020 = pipe.xyz_to_rec2020(xyz_exposed)
-    flog2 = pipe.apply_flog2_curve(rec2020)
-    graded = pipe.apply_lut(flog2, lut_table)
-    out_u8 = (np.clip(graded, 0.0, 1.0) * 255.0).astype(np.uint8)
-    buf = io.BytesIO()
-    iio.imwrite(buf, out_u8, format="jpeg", quality=90)
-    return buf.getvalue()
+# Global pipeline cache — shared across all requests
+cache = PipelineCache()
 
 
-def _batch_export_image(image_path: str, lut_table: np.ndarray, save_path: str, ev_offset: float = 0.0):
-    # Always full resolution for export
-    xyz = load_image_to_xyz(image_path, shrink=1)
-    gain = pipe.get_exposure_gain(xyz, ev_offset=ev_offset)
-    xyz_exposed = xyz * gain
-    rec2020 = pipe.xyz_to_rec2020(xyz_exposed)
-    flog2 = pipe.apply_flog2_curve(rec2020)
+def _process_image(image_path: str, lut_table: np.ndarray, lut_hash: str, shrink: int = 1, ev_offset: float = 0.0) -> bytes:
+    """Process image through the full pipeline, leveraging the cache."""
+    return cache.get_or_render_jpeg(image_path, shrink, ev_offset, lut_hash, lut_table, quality=90)
+
+
+def _batch_export_image(image_path: str, lut_table: np.ndarray, lut_hash: str, save_path: str, ev_offset: float = 0.0):
+    """Export at full resolution. Uses cache for XYZ decode but not for JPEG (different quality)."""
+    flog2 = cache.get_or_compute_flog2(image_path, shrink=1, ev_offset=ev_offset)
     graded = pipe.apply_lut(flog2, lut_table)
     out_u8 = (np.clip(graded, 0.0, 1.0) * 255.0).astype(np.uint8)
     iio.imwrite(save_path, out_u8, format="jpeg", quality=95)
@@ -88,25 +81,19 @@ async def convert(
         shrink = 4 if preview else 1
         
         if include_original:
-            xyz = load_image_to_xyz(img_tmp_path, shrink=shrink)
-            gain = pipe.get_exposure_gain(xyz, ev_offset=ev_offset)
-            xyz_exposed = xyz * gain
-            rec2020 = pipe.xyz_to_rec2020(xyz_exposed)
-            flog2 = pipe.apply_flog2_curve(rec2020)
-            out_u8 = (np.clip(flog2, 0.0, 1.0) * 255.0).astype(np.uint8)
-            buf = io.BytesIO()
-            iio.imwrite(buf, out_u8, format="jpeg", quality=90)
+            orig_jpeg = cache.render_original_jpeg(img_tmp_path, shrink, ev_offset)
             results.append(
                 models.ConvertResult(
                     lut_name="__Original__",
-                    image_base64_jpeg=base64.b64encode(buf.getvalue()).decode("ascii"),
+                    image_base64_jpeg=base64.b64encode(orig_jpeg).decode("ascii"),
                 )
             )
 
         if luts:
             for lut in luts:
-                lut_table = parse_cube(io.BytesIO(await lut.read()))
-                jpeg_bytes = _process_image(img_tmp_path, lut_table, shrink=shrink, ev_offset=ev_offset)
+                lut_bytes = await lut.read()
+                lut_table, lut_hash = cache.get_or_parse_lut(lut_bytes)
+                jpeg_bytes = _process_image(img_tmp_path, lut_table, lut_hash, shrink=shrink, ev_offset=ev_offset)
                 lut_name = os.path.splitext(lut.filename or "output")[0]
                 results.append(
                     models.ConvertResult(
@@ -143,14 +130,13 @@ async def export_batch(req: models.ExportRequest):
             if not os.path.exists(lut_path):
                 continue
 
-            with open(lut_path, "rb") as f:
-                lut_table = parse_cube(f)
+            lut_table, lut_hash = cache.get_or_parse_lut_from_path(lut_path)
 
             lut_name = os.path.splitext(os.path.basename(lut_path))[0]
             save_name = f"{base_name}_{lut_name}.jpeg"
             save_path = os.path.join(req.output_dir, save_name)
 
-            _batch_export_image(req.image_path, lut_table, save_path, ev_offset=req.ev_offset)
+            _batch_export_image(req.image_path, lut_table, lut_hash, save_path, ev_offset=req.ev_offset)
             count += 1
 
         return models.ExportResponse(
@@ -158,6 +144,80 @@ async def export_batch(req: models.ExportRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Path-based conversion (no file upload) ─────────────────────────────────
+
+class ConvertByPathRequest(BaseModel):
+    image_path: str
+    lut_paths: List[str] = []
+    preview: bool = True
+    ev_offset: float = 0.0
+    include_original: bool = False
+
+
+@app.post("/convert-by-path")
+async def convert_by_path(req: ConvertByPathRequest):
+    """Convert a RAW image using file paths instead of uploads.
+    
+    This endpoint avoids the overhead of re-uploading large RAW files
+    over HTTP. The backend reads files directly from the filesystem,
+    leveraging the multi-level pipeline cache for near-instant responses
+    when the same image or LUT has been seen before.
+    """
+    if not os.path.exists(req.image_path):
+        raise HTTPException(status_code=404, detail=f"Image not found: {req.image_path}")
+
+    try:
+        shrink = 4 if req.preview else 1
+        results = []
+
+        if req.include_original:
+            orig_jpeg = cache.render_original_jpeg(req.image_path, shrink, req.ev_offset)
+            results.append(
+                models.ConvertResult(
+                    lut_name="__Original__",
+                    image_base64_jpeg=base64.b64encode(orig_jpeg).decode("ascii"),
+                )
+            )
+
+        for lut_path in req.lut_paths:
+            if not os.path.exists(lut_path):
+                continue
+            lut_table, lut_hash = cache.get_or_parse_lut_from_path(lut_path)
+            jpeg_bytes = cache.get_or_render_jpeg(
+                req.image_path, shrink, req.ev_offset, lut_hash, lut_table, quality=90
+            )
+            lut_name = os.path.splitext(os.path.basename(lut_path))[0]
+            results.append(
+                models.ConvertResult(
+                    lut_name=lut_name,
+                    image_base64_jpeg=base64.b64encode(jpeg_bytes).decode("ascii"),
+                )
+            )
+
+        return models.ConvertResponse(results=results)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Cache management ─────────────────────────────────────────────────────────
+
+@app.get("/cache/stats")
+async def cache_stats():
+    """Return cache hit/miss statistics and current entry counts."""
+    return cache.stats()
+
+
+@app.post("/cache/clear")
+async def cache_clear():
+    """Flush all in-memory caches."""
+    cache.clear()
+    return {"status": "cleared"}
 
 
 if __name__ == "__main__":

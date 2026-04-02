@@ -13,6 +13,14 @@ export interface ConvertPayload {
   include_original?: boolean;
 }
 
+export interface ConvertByPathPayload {
+  imagePath: string;
+  lutPaths: string[];
+  preview?: boolean;
+  evOffset?: number;
+  includeOriginal?: boolean;
+}
+
 export interface HealthResponse {
   status: string;
   version: string;
@@ -36,6 +44,7 @@ export interface ElectronAPI {
   backend: {
     health: () => Promise<HealthResponse>;
     convert: (payload: ConvertPayload) => Promise<ConvertResponse>;
+    convertByPath: (payload: ConvertByPathPayload) => Promise<ConvertResponse>;
     export: (payload: { imagePath: string; lutPaths: string[]; outputDir: string; evOffset: number }) => Promise<{ count: number; message: string }>;
     simulateError: (enabled: boolean) => Promise<void>;
   };

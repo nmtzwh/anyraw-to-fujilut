@@ -147,15 +147,12 @@ async function fetchThumbnails(files: string[], generation: number) {
       if (fetchThumbnailsGeneration !== generation) return; // Abort if a new folder is opened
       
       try {
-          const imgBuffer = await api.fs.readFile(file);
-          const response = await api.backend.convert({
-              imageBuffer: imgBuffer,
-              imageName: file.split(/[\\/]/).pop()!,
-              lutBuffers: [],
-              lutNames: [],
+          const response = await api.backend.convertByPath({
+              imagePath: file,
+              lutPaths: [],
               preview: true,
               evOffset: 0,
-              include_original: true
+              includeOriginal: true
           });
           
           if (fetchThumbnailsGeneration !== generation) return;
@@ -200,19 +197,7 @@ async function startConversion(evOffset?: number): Promise<void> {
   
   enableControls(false);
   setProgress(5);
-  setStatus("Reading RAW file\u2026");
-
-  let imageBuffer: ArrayBuffer;
-  try {
-    imageBuffer = await api.fs.readFile(rawFilePath);
-  } catch (err) {
-    setStatus(`Failed to read file: ${(err as Error).message}`, true);
-    enableControls(true);
-    return;
-  }
-
-  setProgress(10);
-  setStatus("Preparing LUTs\u2026");
+  setStatus("Preparing conversion\u2026");
 
   // Initialize results
   const selectAllCb = qe<HTMLInputElement>("select-all-cb");
@@ -229,23 +214,23 @@ async function startConversion(evOffset?: number): Promise<void> {
   originalDataUrl = null;
   resetZoom();
 
-  // Fetch Original Base Image first
+  setProgress(10);
+
+  // Fetch Original Base Image first (path-based, no file upload)
   try {
-      const response = await api.backend.convert({
-        imageBuffer,
-        imageName: rawFileName ?? "image",
-        lutBuffers: [],
-        lutNames: [],
+      const response = await api.backend.convertByPath({
+        imagePath: rawFilePath,
+        lutPaths: [],
         preview: true,
         evOffset: currentEvOffset,
-        include_original: true
+        includeOriginal: true
       });
       if (response && response.results.length > 0) {
           originalDataUrl = `data:image/jpeg;base64,${response.results[0].image_base64_jpeg}`;
       }
   } catch(e) { console.error("Could not fetch original image", e); }
 
-  // Process one by one
+  // Process LUTs one by one (path-based, backend caches the intermediate)
   for (let i = 0; i < lutFilePaths.length; i++) {
     const path = lutFilePaths[i];
     const name = lutNames[i];
@@ -255,15 +240,12 @@ async function startConversion(evOffset?: number): Promise<void> {
     setProgress(progress);
 
     try {
-      const lutBuffer = await api.fs.readFile(path);
-      const response = await api.backend.convert({
-        imageBuffer,
-        imageName: rawFileName ?? "image",
-        lutBuffers: [lutBuffer],
-        lutNames: [name],
+      const response = await api.backend.convertByPath({
+        imagePath: rawFilePath,
+        lutPaths: [path],
         preview: true,
         evOffset: currentEvOffset,
-      } as any);
+      });
 
       if (response && Array.isArray(response.results) && response.results.length > 0) {
         const r = response.results[0];
@@ -276,7 +258,6 @@ async function startConversion(evOffset?: number): Promise<void> {
     } catch (err) {
       console.error(`Failed to apply LUT ${name}:`, err);
       results[i].loading = false;
-      // We could show an error icon here, but for now just stop loading
       updateResultUI(i);
     }
   }

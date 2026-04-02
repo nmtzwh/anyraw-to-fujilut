@@ -118,6 +118,42 @@ export function registerIpcHandlers(): void {
     }
   );
 
+  // ── Convert by path (no file upload — uses backend cache) ────────────────
+  ipcMain.handle(
+    "backend:convertByPath",
+    async (
+      _ev: IpcMainInvokeEvent,
+      payload: {
+        imagePath: string;
+        lutPaths: string[];
+        preview?: boolean;
+        evOffset?: number;
+        includeOriginal?: boolean;
+      }
+    ): Promise<ConvertResponse> => {
+      if (simulateConvertError) {
+        throw new Error("Simulated backend error — inject backend:simulateError(false) to disable");
+      }
+      const { imagePath, lutPaths, preview = true, evOffset = 0, includeOriginal = false } = payload;
+
+      const resp = await fetch(`${BACKEND_ORIGIN}/convert-by-path`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          image_path: imagePath,
+          lut_paths: lutPaths,
+          preview,
+          ev_offset: evOffset,
+          include_original: includeOriginal,
+        }),
+      });
+      if (!resp.ok) {
+        throw new Error(`ConvertByPath failed: ${resp.status} ${resp.statusText}`);
+      }
+      return resp.json() as Promise<ConvertResponse>;
+    }
+  );
+
   ipcMain.handle(
     "backend:export",
     async (
