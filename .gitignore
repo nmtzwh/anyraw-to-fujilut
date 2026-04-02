@@ -22,6 +22,16 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+.venv/
+build_log.txt
+npm_install_log.txt
+test_output.txt
+test_errors.txt
+test_errors_utf8.txt
+typecheck_output.txt
+builder_output*.txt
+test_lut.cube
+*.npy
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -183,6 +193,7 @@ node_modules/
 
 # Build outputs (tsconfig outDir + esbuild)
 # build/ is already covered above under Python dist
+public/build/
 
 # npm / yarn
 .npm

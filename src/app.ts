@@ -99,6 +99,15 @@ async function openRawFile(): Promise<void> {
 function selectRawFile(filePath: string) {
   rawFilePath = filePath;
   rawFileName = filePath.split(/[\\/]/).pop() ?? filePath;
+  
+  // Reset exposure slider when switching images
+  currentEvOffset = 0;
+  const slider = qe<HTMLInputElement>("exposure-slider");
+  if (slider) {
+      slider.value = "0";
+      updateExposureLabel();
+  }
+
   setStatus(`Selected: ${rawFileName}`);
   checkConvertReady();
   if (lutFilePaths.length > 0) startConversion();
@@ -514,36 +523,45 @@ async function exportSelected(): Promise<void> {
   const outputDir = await api.dialog.selectDirectory();
   if (!outputDir) return;
 
-  enableControls(false);
+  // Capture current state in case user navigates away during export
+  const exportImagePath = rawFilePath;
+  const exportEvOffset = currentEvOffset;
+
   setProgress(5);
   setStatus(`Preparing to export ${selectedIndices.length} image(s)\u2026`);
 
-  let exportedCount = 0;
-  try {
-    for (let i = 0; i < selectedIndices.length; i++) {
-        const idx = selectedIndices[i];
-        const lutPath = lutFilePaths[idx];
-        const lutName = lutNames[idx];
-        
-        setStatus(`Exporting ${i + 1}/${selectedIndices.length}: ${lutName}\u2026`);
-        
-        await api.backend.export({
-          imagePath: rawFilePath,
-          lutPaths: [lutPath],
-          outputDir,
-          evOffset: currentEvOffset,
-        });
-        
-        exportedCount++;
-        setProgress(5 + Math.floor((exportedCount / selectedIndices.length) * 95));
+  const exportBtn = qe<HTMLButtonElement>("btn-export");
+  if (exportBtn) exportBtn.disabled = true;
+
+  // Run asynchronously without blocking the UI
+  (async () => {
+    let exportedCount = 0;
+    try {
+      for (let i = 0; i < selectedIndices.length; i++) {
+          const idx = selectedIndices[i];
+          const lutPath = lutFilePaths[idx];
+          const lutName = lutNames[idx];
+          
+          setStatus(`Exporting ${i + 1}/${selectedIndices.length}: ${lutName}\u2026`);
+          
+          await api.backend.export({
+            imagePath: exportImagePath,
+            lutPaths: [lutPath],
+            outputDir,
+            evOffset: exportEvOffset,
+          });
+          
+          exportedCount++;
+          setProgress(5 + Math.floor((exportedCount / selectedIndices.length) * 95));
+      }
+      setStatus(`Successfully exported ${exportedCount} image(s) to ${outputDir}`);
+    } catch (err) {
+      setStatus(`Export failed after ${exportedCount} image(s): ${(err as Error).message}`, true);
+    } finally {
+      setProgress(100);
+      if (exportBtn) exportBtn.disabled = false;
     }
-    setStatus(`Successfully exported ${exportedCount} image(s) to ${outputDir}`);
-  } catch (err) {
-    setStatus(`Export failed after ${exportedCount} image(s): ${(err as Error).message}`, true);
-  } finally {
-    setProgress(100);
-    enableControls(true);
-  }
+  })();
 }
 
 function updateExposureLabel(): void {

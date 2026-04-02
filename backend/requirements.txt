@@ -9,6 +9,7 @@ rawpy>=0.19
 colour-science>=0.3
 imageio>=2.25
 tifffile>=2023.1.23
+threadpoolctl>=3.0
 
 # FastAPI service
 fastapi>=0.100

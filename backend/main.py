@@ -3,6 +3,7 @@ import io
 import os
 import sys
 import tempfile
+import asyncio
 from contextlib import asynccontextmanager
 from typing import List, Optional
 
@@ -16,6 +17,7 @@ if __package__ is None:
 import numpy as np
 import imageio.v3 as iio
 import traceback
+from threadpoolctl import threadpool_limits
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from pydantic import BaseModel
 
@@ -47,10 +49,12 @@ def _process_image(image_path: str, lut_table: np.ndarray, lut_hash: str, shrink
 
 def _batch_export_image(image_path: str, lut_table: np.ndarray, lut_hash: str, save_path: str, ev_offset: float = 0.0):
     """Export at full resolution. Uses cache for XYZ decode but not for JPEG (different quality)."""
-    flog2 = cache.get_or_compute_flog2(image_path, shrink=1, ev_offset=ev_offset)
-    graded = pipe.apply_lut(flog2, lut_table)
-    out_u8 = (np.clip(graded, 0.0, 1.0) * 255.0).astype(np.uint8)
-    iio.imwrite(save_path, out_u8, format="jpeg", quality=95)
+    # Throttle OpenMP/BLAS threading to 2 cores maximum when exporting in background
+    with threadpool_limits(limits=2):
+        flog2 = cache.get_or_compute_flog2(image_path, shrink=1, ev_offset=ev_offset)
+        graded = pipe.apply_lut(flog2, lut_table)
+        out_u8 = (np.clip(graded, 0.0, 1.0) * 255.0).astype(np.uint8)
+        iio.imwrite(save_path, out_u8, format="jpeg", quality=95)
 
 
 @app.get("/health")
@@ -136,7 +140,10 @@ async def export_batch(req: models.ExportRequest):
             save_name = f"{base_name}_{lut_name}.jpeg"
             save_path = os.path.join(req.output_dir, save_name)
 
-            _batch_export_image(req.image_path, lut_table, lut_hash, save_path, ev_offset=req.ev_offset)
+            # Offload heavy CPU work to a background thread to prevent blocking the Event Loop
+            await asyncio.to_thread(
+                _batch_export_image, req.image_path, lut_table, lut_hash, save_path, req.ev_offset
+            )
             count += 1
 
         return models.ExportResponse(

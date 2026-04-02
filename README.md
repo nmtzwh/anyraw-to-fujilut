@@ -1,5 +1,7 @@
 # AnyRAW to Fujifilm's LUTs
 
+![Showcase](doc/Screenshot%202026-04-02%20201622.jpg)
+
 Convert Sony RAW files (and other camera formats) into Fujifilm F-Log2 images with Fujifilm 3D LUTs applied.
 
 ## Architecture
